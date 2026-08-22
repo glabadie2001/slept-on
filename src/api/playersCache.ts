@@ -1,10 +1,9 @@
+import { idbGet, idbSet } from "./idb";
 import type { PlayerMap, SleeperPlayer } from "../types";
 
 // The full players/nfl blob is ~5 MB / ~11k players. We trim it to fantasy-relevant
 // entries and cache in IndexedDB with a TTL so it's fetched at most once a day.
 
-const DB_NAME = "war-room";
-const STORE = "kv";
 const PLAYERS_KEY = "players_nfl";
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -13,43 +12,6 @@ const RELEVANT_POSITIONS = new Set(["QB", "RB", "WR", "TE", "K", "DEF"]);
 interface CachedBlob {
   savedAt: number;
   players: PlayerMap;
-}
-
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbGet<T>(key: string): Promise<T | undefined> {
-  try {
-    const db = await openDb();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
-      const req = tx.objectStore(STORE).get(key);
-      req.onsuccess = () => resolve(req.result as T | undefined);
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return undefined; // private mode / IDB unavailable — just refetch
-  }
-}
-
-async function idbSet(key: string, value: unknown): Promise<void> {
-  try {
-    const db = await openDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(value, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    // Cache write failure is non-fatal.
-  }
 }
 
 export function trimPlayers(raw: Record<string, Partial<SleeperPlayer>>): PlayerMap {

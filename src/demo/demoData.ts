@@ -119,9 +119,11 @@ export function buildDemoBundle(): LeagueBundle {
   // Story adjustments: juggernaut (roster 7) gets Puka; my team (roster 1) got Mixon.
   rosterPlayers[6].unshift(puka.id);
   rosterPlayers[0].push(mixon.id);
-  // Handicap my team: move my two best skill players to the juggernaut's bench... dire times.
+  // Handicap my team: my best skill player goes to the juggernaut's bench
+  // (the previous regime's parting gift)... dire times.
   const mine = rosterPlayers[0];
   mine.sort((a, b) => (pool.find((p) => p.id === b)?.ppg ?? 0) - (pool.find((p) => p.id === a)?.ppg ?? 0));
+  rosterPlayers[6].push(...mine.splice(0, 1));
 
   const scoring: Record<string, number> = {
     pass_yd: 0.04, pass_td: 4, pass_int: -1, rush_yd: 0.1, rush_td: 6,
@@ -186,19 +188,15 @@ export function buildDemoBundle(): LeagueBundle {
     metadata: { team_name: TEAM_NAMES[i] },
   }));
 
-  const rosters: SleeperRoster[] = rosterPlayers.map((ids, i) => {
-    const wins = i === 0 ? 1 : i === 6 ? 5 : Math.floor(rand() * 5) + 1;
-    const fpts = 400 + wins * 90 + Math.floor(rand() * 120);
-    return {
-      roster_id: i + 1,
-      owner_id: `u${i + 1}`,
-      league_id: "demo",
-      players: ids,
-      starters: [],
-      reserve: [],
-      settings: { wins, losses: 5 - Math.min(5, wins), ties: 0, fpts, fpts_against: 420 + Math.floor(rand() * 200), waiver_position: 12 - i, waiver_budget_used: Math.floor(rand() * 60) },
-    };
-  });
+  const rosters: SleeperRoster[] = rosterPlayers.map((ids, i) => ({
+    roster_id: i + 1,
+    owner_id: `u${i + 1}`,
+    league_id: "demo",
+    players: ids,
+    starters: [],
+    reserve: [],
+    settings: { wins: 0, losses: 0, ties: 0, fpts: 0, fpts_against: 0, waiver_position: 12 - i, waiver_budget_used: Math.floor(rand() * 60) },
+  }));
 
   // Set starters = optimal-ish by ppg per slot need (leave my team with one
   // injured starter so lineup advice has something to say).
@@ -222,20 +220,76 @@ export function buildDemoBundle(): LeagueBundle {
     ];
   }
 
-  // Week 6 matchups: 1v7 (me vs the juggernaut, naturally), 2v8, ...
-  const matchups: SleeperMatchup[] = [];
-  for (let m = 0; m < 6; m++) {
-    for (const rid of [m + 1, m + 7]) {
-      const r = rosters[rid - 1];
-      matchups.push({
-        roster_id: rid,
-        matchup_id: m + 1,
-        points: 0,
-        players: r.players,
-        starters: r.starters,
-      });
+  // ---- Full 14-week regular season: circle-method round robin, weeks 1-5
+  // played out with strength-biased scores (so records/points are consistent
+  // and the playoff simulator has real weekly data), week 6 = current. ----
+  const REG_SEASON_END = 14;
+  const CURRENT_WEEK = 6;
+
+  // Team strength = sum of starters' true ppg, with story handicaps.
+  const ppgOf = new Map(pool.map((p) => [p.id, p.ppg]));
+  const teamMean = rosters.map((r) => {
+    const starters = (r.starters ?? []).filter((s) => s !== "0");
+    const base = starters.reduce((s, id) => s + (ppgOf.get(id) ?? 0), 0);
+    return base + (r.roster_id === 1 ? -4 : r.roster_id === 7 ? 7 : 0);
+  });
+
+  // Circle-method pairings with roster 7 (the juggernaut) in the fixed seat.
+  const circle = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
+  const weekPairs = (week: number): [number, number][] => {
+    const rot = circle.map((_, i) => circle[(i + week - 1) % circle.length]);
+    const out: [number, number][] = [[7, rot[0]]];
+    for (let i = 1; i <= 5; i++) out.push([rot[i], rot[circle.length - i]]);
+    return out;
+  };
+  const gauss = () => (rand() + rand() + rand() + rand() - 2) * 1.55; // ~N(0,0.9)
+
+  const schedule: Record<number, SleeperMatchup[]> = {};
+  for (let week = 1; week <= REG_SEASON_END; week++) {
+    const played = week < CURRENT_WEEK;
+    schedule[week] = weekPairs(week).flatMap(([a, b], m) =>
+      [a, b].map((rid) => {
+        const r = rosters[rid - 1];
+        const points = played
+          ? Math.round(Math.max(40, teamMean[rid - 1] + gauss() * 20) * 100) / 100
+          : 0;
+        return {
+          roster_id: rid,
+          matchup_id: m + 1,
+          points,
+          players: r.players,
+          starters: r.starters,
+        };
+      }),
+    );
+  }
+
+  // Records + points from the played weeks.
+  for (let week = 1; week < CURRENT_WEEK; week++) {
+    const byId = new Map<number, SleeperMatchup[]>();
+    for (const m of schedule[week]) {
+      const arr = byId.get(m.matchup_id!) ?? [];
+      arr.push(m);
+      byId.set(m.matchup_id!, arr);
+    }
+    for (const [a, b] of [...byId.values()] as [SleeperMatchup, SleeperMatchup][]) {
+      const ra = rosters[a.roster_id - 1].settings;
+      const rb = rosters[b.roster_id - 1].settings;
+      ra.fpts = Math.round((ra.fpts + a.points) * 100) / 100;
+      rb.fpts = Math.round((rb.fpts + b.points) * 100) / 100;
+      ra.fpts_against = Math.round(((ra.fpts_against ?? 0) + b.points) * 100) / 100;
+      rb.fpts_against = Math.round(((rb.fpts_against ?? 0) + a.points) * 100) / 100;
+      if (a.points > b.points) {
+        ra.wins++;
+        rb.losses++;
+      } else {
+        rb.wins++;
+        ra.losses++;
+      }
     }
   }
+
+  const matchups: SleeperMatchup[] = schedule[CURRENT_WEEK];
 
   // The infamous trade, on the ledger.
   const transactions: SleeperTransaction[] = [
@@ -275,6 +329,7 @@ export function buildDemoBundle(): LeagueBundle {
     lastSeasonStats,
     lastSeasonYear: "2025",
     matchups,
+    schedule,
     transactions,
     tradedPicks,
     trendingAdds,

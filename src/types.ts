@@ -175,6 +175,9 @@ export interface LeagueBundle {
   lastSeasonStats: Record<string, StatLine>;
   lastSeasonYear: string;
   matchups: SleeperMatchup[];
+  /** every regular-season week's matchups (past weeks carry actual points,
+   *  future weeks carry the schedule) — feeds the playoff simulator */
+  schedule: Record<number, SleeperMatchup[]>;
   transactions: SleeperTransaction[];
   tradedPicks: SleeperTradedPick[];
   trendingAdds: TrendingPlayer[];

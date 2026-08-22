@@ -51,6 +51,7 @@ export function PlayerCell({ playerId, showValue }: { playerId: string; showValu
           {p.team ?? "FA"}
           {p.age ? ` · ${p.age}y` : ""}
           {showValue && v ? ` · val ${v.value}` : ""}
+          {showValue && v?.market != null ? ` · mkt ${v.market.toLocaleString()}` : ""}
         </div>
       </div>
     </div>

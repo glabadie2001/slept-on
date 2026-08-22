@@ -247,10 +247,11 @@ export function evaluateTrade(
   getPicks: SleeperTradedPick[],
   values: Record<string, PlayerValue>,
   currentSeason: string,
+  pickVal: (pick: SleeperTradedPick) => number = (p) => pickValue(p, currentSeason),
 ): { giveValue: number; getValue: number; verdict: string } {
   const sum = (ids: string[], picks: SleeperTradedPick[]) =>
     ids.reduce((s, id) => s + (values[id]?.value ?? 0), 0) +
-    picks.reduce((s, p) => s + pickValue(p, currentSeason), 0);
+    picks.reduce((s, p) => s + pickVal(p), 0);
   const giveValue = Math.round(sum(giveIds, givePicks) * 10) / 10;
   const getValue = Math.round(sum(getIds, getPicks) * 10) / 10;
   const diff = getValue - giveValue;
@@ -352,6 +353,7 @@ export function tradeLedger(
   transactions: SleeperTransaction[],
   values: Record<string, PlayerValue>,
   currentSeason: string,
+  pickVal: (pick: SleeperTradedPick) => number = (p) => pickValue(p, currentSeason),
 ): {
   tx: SleeperTransaction;
   perRoster: Record<number, { in: string[]; out: string[]; picksIn: SleeperTradedPick[]; picksOut: SleeperTradedPick[]; net: number }>;
@@ -376,10 +378,10 @@ export function tradeLedger(
       for (const rec of Object.values(perRoster)) {
         const inV =
           rec.in.reduce((s, id) => s + (values[id]?.value ?? 0), 0) +
-          rec.picksIn.reduce((s, p) => s + pickValue(p, currentSeason), 0);
+          rec.picksIn.reduce((s, p) => s + pickVal(p), 0);
         const outV =
           rec.out.reduce((s, id) => s + (values[id]?.value ?? 0), 0) +
-          rec.picksOut.reduce((s, p) => s + pickValue(p, currentSeason), 0);
+          rec.picksOut.reduce((s, p) => s + pickVal(p), 0);
         rec.net = Math.round((inV - outV) * 10) / 10;
       }
       return { tx, perRoster };

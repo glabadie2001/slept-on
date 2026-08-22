@@ -24,8 +24,9 @@ can be explored and screenshot-tested without a network connection.
 | **Overview** | Power rankings (45% optimal-lineup strength, 30% dynasty roster value, 15% points, 10% record), stat tiles, every team's top assets, your team highlighted |
 | **My Team** | Current vs optimal lineup projection, concrete start/sit moves ("start X over Y, +2.2"), injury report with severity, bench ranked by value |
 | **Matchup** | Head-to-head slot-by-slot projections vs this week's opponent, win probability (normal model) |
+| **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
 | **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
-| **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values |
+| **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values — all market-aware once a value source is synced |
 | **Dynasty** | Value-weighted core age vs league, contend/rebuild window call, draft-pick capital, young-core and sell-window lists |
 
 ## Architecture
@@ -36,19 +37,30 @@ src/
     http.ts          fetch with timeout + retry/backoff
     sleeper.ts       typed client: documented v1 endpoints + semi-official
                      projections/stats (api.sleeper.com) with graceful fallback
+    idb.ts           tiny shared IndexedDB kv store
     playersCache.ts  ~5MB players blob trimmed to fantasy positions, IndexedDB, 24h TTL
+    marketValues.ts  real dynasty market values: FantasyCalc live sync (joins on
+                     sleeperId, parameterized by superflex/PPR/size), KTC-style
+                     paste import (name matching), demo market; IndexedDB cache
   lib/
     scoring.ts       league scoring_settings × raw stat lines (custom scoring is exact)
     value.ts         dynasty value model: production vs replacement × age curve
                      + youth upside; superflex-aware; pick values
+    market.ts        market↔heuristic blending on the 0-100 scale (players + picks)
     lineup.ts        lineup optimizer honoring league roster_positions (flex/superflex),
                      start/sit advice, availability handling (Out/IR = 0)
     analysis.ts      power rankings, positional needs, waiver targets,
                      trade suggestions/evaluator/ledger, injury alerts, win prob
-  demo/demoData.ts   deterministic seeded demo league
-  AppContext.tsx     loads the full league bundle (parallel fetches), memoized values
-  views/             Setup, Overview, MyTeam, Matchup, Waivers, Trades, Dynasty
+    simulator.ts     seeded Monte Carlo season sim: Normal(strength, σ) weekly scores,
+                     standings w/ tiebreaks, reseeded bracket, leverage conditioning
+    __tests__/       vitest suite for the sim engine, market parsing/blending, demo data
+  demo/demoData.ts   deterministic seeded demo league (full 14-wk schedule, 5 played)
+  AppContext.tsx     loads the full league bundle (parallel fetches incl. every week's
+                     matchups), blends market values, memoized
+  views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Dynasty
 ```
+
+Run `npm test` for the simulation/market unit suite (29 tests, no network needed).
 
 Design notes:
 
@@ -63,8 +75,8 @@ Design notes:
 
 ## Roadmap (next session)
 
-- [ ] Real dynasty market values (KeepTradeCut/FantasyCalc import) alongside the heuristic
-- [ ] Multi-week schedule outlook + playoff odds simulation (Monte Carlo)
+- [x] Real dynasty market values (KeepTradeCut/FantasyCalc import) alongside the heuristic
+- [x] Multi-week schedule outlook + playoff odds simulation (Monte Carlo)
 - [ ] Waiver FAAB bid optimizer using league bid history
 - [ ] Trade finder for 2-for-1 / pick-included packages
 - [ ] News feed / injury push alerts

@@ -4,9 +4,10 @@ import { PlayerCell } from "../components";
 import { tradeLedger, tradeSuggestions } from "../lib/analysis";
 import { evaluateTrade } from "../lib/analysis";
 import { pickLabel } from "../lib/value";
+import { ValuesPanel } from "./ValuesPanel";
 
 export function Trades() {
-  const { bundle, teams, myTeam, values } = useAppData();
+  const { bundle, teams, myTeam, values, pickVal } = useAppData();
   const [give, setGive] = useState<string[]>([]);
   const [get, setGet] = useState<string[]>([]);
   const [partnerRosterId, setPartnerRosterId] = useState<number | null>(null);
@@ -23,15 +24,15 @@ export function Trades() {
   }, [bundle, myTeam, values]);
 
   const ledger = useMemo(
-    () => tradeLedger(bundle.transactions, values, bundle.league.season),
-    [bundle, values],
+    () => tradeLedger(bundle.transactions, values, bundle.league.season, pickVal),
+    [bundle, values, pickVal],
   );
 
   const byRoster = new Map(teams.map((t) => [t.rosterId, t]));
   const partner = partnerRosterId != null ? byRoster.get(partnerRosterId) : null;
   const evalResult =
     give.length || get.length
-      ? evaluateTrade(give, get, [], [], values, bundle.league.season)
+      ? evaluateTrade(give, get, [], [], values, bundle.league.season, pickVal)
       : null;
 
   const toggle = (list: string[], setList: (v: string[]) => void, id: string) =>
@@ -42,6 +43,7 @@ export function Trades() {
 
   return (
     <div>
+      <ValuesPanel />
       {suggestions.length > 0 && (
         <div className="card section">
           <h2>Suggested trades</h2>

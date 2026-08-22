@@ -1,10 +1,11 @@
 import { useMemo } from "react";
 import { useAppData } from "../AppContext";
 import { PlayerCell, StatTile } from "../components";
-import { pickLabel, pickValue } from "../lib/value";
+import { pickLabel } from "../lib/value";
+import { ValuesPanel } from "./ValuesPanel";
 
 export function Dynasty() {
-  const { bundle, teams, myTeam, values } = useAppData();
+  const { bundle, teams, myTeam, values, pickVal } = useAppData();
 
   const outlook = useMemo(() => {
     const rows = teams.map((t) => {
@@ -20,11 +21,11 @@ export function Dynasty() {
       const lostPicks = bundle.tradedPicks.filter(
         (p) => p.roster_id === t.rosterId && p.owner_id !== t.rosterId,
       );
-      const pickCapital = myPicks.reduce((s, p) => s + pickValue(p, bundle.league.season), 0);
+      const pickCapital = myPicks.reduce((s, p) => s + pickVal(p), 0);
       return { team: t, coreAge: Math.round(wAge * 10) / 10, totalV: Math.round(totalV), myPicks, lostPicks, pickCapital: Math.round(pickCapital) };
     });
     return rows.sort((a, b) => b.totalV - a.totalV);
-  }, [bundle, teams, values]);
+  }, [bundle, teams, values, pickVal]);
 
   const my = outlook.find((o) => o.team.isMine);
   const avgAge = outlook.reduce((s, o) => s + o.coreAge, 0) / Math.max(1, outlook.length);
@@ -45,6 +46,7 @@ export function Dynasty() {
 
   return (
     <div>
+      <ValuesPanel />
       <div className="stat-row">
         <StatTile label="Your core age" value={my?.coreAge ?? "—"} sub={`league avg ${avgAge.toFixed(1)} (value-weighted, top 12)`} />
         <StatTile label="Contention window" value={window?.label ?? "—"} sub={window?.note} />

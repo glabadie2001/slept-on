@@ -6,6 +6,7 @@ import { Setup } from "./views/Setup";
 import { Overview } from "./views/Overview";
 import { MyTeam } from "./views/MyTeam";
 import { Matchup } from "./views/Matchup";
+import { Playoffs } from "./views/Playoffs";
 import { Waivers } from "./views/Waivers";
 import { Trades } from "./views/Trades";
 import { Dynasty } from "./views/Dynasty";
@@ -15,6 +16,7 @@ const TABS = [
   { id: "overview", label: "Overview", view: Overview },
   { id: "team", label: "My Team", view: MyTeam },
   { id: "matchup", label: "Matchup", view: Matchup },
+  { id: "playoffs", label: "Playoffs", view: Playoffs },
   { id: "waivers", label: "Waivers", view: Waivers },
   { id: "trades", label: "Trades", view: Trades },
   { id: "dynasty", label: "Dynasty", view: Dynasty },
