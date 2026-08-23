@@ -3,6 +3,8 @@ import { loadPlayersWithCache, trimPlayers } from "./playersCache";
 import type {
   PlayerMap,
   ProjectionRow,
+  SleeperDraft,
+  SleeperDraftPick,
   SleeperLeague,
   SleeperMatchup,
   SleeperRoster,
@@ -45,6 +47,16 @@ export const sleeper = {
   /** round = week for in-season transactions; Sleeper returns newest first. */
   getTransactions: (leagueId: string, round: number) =>
     fetchJson<SleeperTransaction[]>(`${V1}/league/${leagueId}/transactions/${round}`),
+
+  /** newest first */
+  getLeagueDrafts: (leagueId: string) =>
+    fetchJson<SleeperDraft[]>(`${V1}/league/${leagueId}/drafts`),
+
+  getDraft: (draftId: string) => fetchJson<SleeperDraft>(`${V1}/draft/${draftId}`),
+
+  /** picks made so far, in pick order */
+  getDraftPicks: (draftId: string) =>
+    fetchJson<SleeperDraftPick[]>(`${V1}/draft/${draftId}/picks`),
 
   getTrending: (type: "add" | "drop", lookbackHours = 48, limit = 50) =>
     fetchJson<TrendingPlayer[]>(

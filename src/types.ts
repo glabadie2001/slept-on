@@ -136,6 +136,42 @@ export interface TrendingPlayer {
   count: number;
 }
 
+export interface SleeperDraft {
+  draft_id: string;
+  league_id?: string | null;
+  status: "pre_draft" | "drafting" | "paused" | "complete";
+  type: "snake" | "linear" | "auction";
+  season: string;
+  start_time: number | null; // epoch ms
+  settings: {
+    rounds?: number;
+    teams?: number;
+    pick_timer?: number;
+    reversal_round?: number;
+    [k: string]: number | undefined;
+  };
+  /** user_id -> draft slot (1-based); null until order is set */
+  draft_order: Record<string, number> | null;
+  /** draft slot (as string) -> roster_id */
+  slot_to_roster_id?: Record<string, number> | null;
+}
+
+export interface SleeperDraftPick {
+  round: number;
+  pick_no: number; // overall pick number, 1-based
+  draft_slot: number;
+  roster_id: number | null;
+  player_id: string;
+  picked_by: string; // user_id ("" for autopick)
+  is_keeper?: boolean | null;
+  metadata?: {
+    first_name?: string;
+    last_name?: string;
+    position?: string;
+    team?: string;
+  } | null;
+}
+
 // ---- Projections / stats (api.sleeper.com, semi-official) ----
 
 // Raw stat lines keyed by Sleeper stat names (pass_yd, rush_td, rec, ...).

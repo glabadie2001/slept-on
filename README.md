@@ -27,6 +27,7 @@ can be explored and screenshot-tested without a network connection.
 | **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
 | **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
 | **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values — all market-aware once a value source is synced |
+| **Draft** | Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns; "where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock) |
 | **Dynasty** | Value-weighted core age vs league, contend/rebuild window call, draft-pick capital, young-core and sell-window lists |
 
 ## Architecture
@@ -47,6 +48,8 @@ src/
     value.ts         dynasty value model: production vs replacement × age curve
                      + youth upside; superflex-aware; pick values
     market.ts        market↔heuristic blending on the 0-100 scale (players + picks)
+    guides.ts        draft-guide parsing (forgiving: csv/tsv/ranked text/tiers) and
+                     consensus aggregation with name matching + disagreement stats
     lineup.ts        lineup optimizer honoring league roster_positions (flex/superflex),
                      start/sit advice, availability handling (Out/IR = 0)
     analysis.ts      power rankings, positional needs, waiver targets,
@@ -57,10 +60,10 @@ src/
   demo/demoData.ts   deterministic seeded demo league (full 14-wk schedule, 5 played)
   AppContext.tsx     loads the full league bundle (parallel fetches incl. every week's
                      matchups), blends market values, memoized
-  views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Dynasty
+  views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Draft, Dynasty
 ```
 
-Run `npm test` for the simulation/market unit suite (29 tests, no network needed).
+Run `npm test` for the simulation/market/guides unit suite (38 tests, no network needed).
 
 Design notes:
 

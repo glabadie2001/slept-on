@@ -9,6 +9,7 @@ import { Matchup } from "./views/Matchup";
 import { Playoffs } from "./views/Playoffs";
 import { Waivers } from "./views/Waivers";
 import { Trades } from "./views/Trades";
+import { Draft } from "./views/Draft";
 import { Dynasty } from "./views/Dynasty";
 import { injuryAlerts } from "./lib/analysis";
 
@@ -19,6 +20,7 @@ const TABS = [
   { id: "playoffs", label: "Playoffs", view: Playoffs },
   { id: "waivers", label: "Waivers", view: Waivers },
   { id: "trades", label: "Trades", view: Trades },
+  { id: "draft", label: "Draft", view: Draft },
   { id: "dynasty", label: "Dynasty", view: Dynasty },
 ] as const;
 
