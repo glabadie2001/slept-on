@@ -80,6 +80,13 @@ Design notes:
 
 - [x] Real dynasty market values (KeepTradeCut/FantasyCalc import) alongside the heuristic
 - [x] Multi-week schedule outlook + playoff odds simulation (Monte Carlo)
+- [x] Draft tab: guide aggregation into a consensus board + Sleeper draft-room sync
+- [ ] **Live-draft auto-polling** — hands-free pick sync while a draft is in progress
+      (poll `draft/<id>/picks` on an interval while status is `drafting`, pause when idle)
+- [ ] **On-the-clock pick recommendations** — when it's your pick, surface the top 3
+      options, each with its reasons ("consensus #4, falls 6 spots past ADP, fills your
+      thinnest position, market agrees at 5,2k") from consensus rank + guide disagreement
+      + roster needs + market/heuristic value
 - [ ] Waiver FAAB bid optimizer using league bid history
 - [ ] Trade finder for 2-for-1 / pick-included packages
 - [ ] News feed / injury push alerts
