@@ -6,6 +6,23 @@ import { normalizeName } from "../api/marketValues";
 import { sleeper } from "../api/sleeper";
 import { aggregateGuides, parseGuide } from "../lib/guides";
 import type { ConsensusRow, Guide } from "../lib/guides";
+import {
+  marketDivergence,
+  needMultipliers,
+  pickPosition,
+  qbMarketContext,
+  survivalOdds,
+  upcomingPicks,
+} from "../lib/draftIntel";
+import { isSuperflex } from "../lib/value";
+import {
+  BUNDLED_AT,
+  OVERALL_GUIDES_1QB,
+  OVERALL_GUIDES_SF,
+  ROOKIE_GUIDES_1QB,
+  ROOKIE_GUIDES_SF,
+} from "../data/bundledGuides";
+import type { BundledGuide } from "../data/bundledGuides";
 import { buildSampleGuides } from "../demo/sampleGuides";
 import type { SleeperDraft, SleeperDraftPick } from "../types";
 
@@ -13,18 +30,6 @@ const POS_FILTERS = ["ALL", "QB", "RB", "WR", "TE"];
 
 function guidesKey(leagueId: string): string {
   return `draft_guides:${leagueId}`;
-}
-
-/** overall pick number → round + slot (snake or linear) */
-export function pickPosition(
-  pickNo: number,
-  teams: number,
-  type: SleeperDraft["type"],
-): { round: number; slot: number } {
-  const round = Math.ceil(pickNo / teams);
-  const idx = (pickNo - 1) % teams;
-  const slot = type === "snake" && round % 2 === 0 ? teams - idx : idx + 1;
-  return { round, slot };
 }
 
 export function Draft() {
@@ -92,6 +97,34 @@ export function Draft() {
   };
 
   const removeGuide = (id: string) => persist(guides.filter((g) => g.id !== id));
+
+  // Scraped guides bundled with the app (see src/data/bundledGuides.ts),
+  // picked to match the league's QB format.
+  const sf = isSuperflex(bundle.league);
+  const rookieSet = sf ? ROOKIE_GUIDES_SF : ROOKIE_GUIDES_1QB;
+  const overallSet = sf ? OVERALL_GUIDES_SF : OVERALL_GUIDES_1QB;
+
+  const loadBundled = useCallback(
+    (set: BundledGuide[]) => {
+      const have = new Set(guides.map((g) => g.name));
+      const fresh = set.filter((b) => !have.has(b.name));
+      if (fresh.length === 0) {
+        setImportNote("Those scraped guides are already loaded.");
+        return;
+      }
+      persist([
+        ...guides,
+        ...fresh.map((b, i) => ({
+          id: `b${Date.now()}-${i}`,
+          name: b.name,
+          addedAt: Date.now() + i,
+          entries: b.entries,
+        })),
+      ]);
+      setImportNote(`Loaded ${fresh.length} scraped guide${fresh.length === 1 ? "" : "s"} (${BUNDLED_AT}).`);
+    },
+    [guides, persist],
+  );
 
   // ---- Sleeper draft room ----
   const [draft, setDraft] = useState<SleeperDraft | null>(null);
@@ -183,7 +216,7 @@ export function Draft() {
   const [posFilter, setPosFilter] = useState("ALL");
   const [hideDrafted, setHideDrafted] = useState(true);
   const [hideRostered, setHideRostered] = useState(false);
-  const [sortBy, setSortBy] = useState<"consensus" | "divisive">("consensus");
+  const [sortBy, setSortBy] = useState<"consensus" | "divisive" | "steals">("consensus");
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
 
@@ -191,6 +224,54 @@ export function Draft() {
     (row: ConsensusRow) =>
       (row.sleeperId != null && draftedIds.has(row.sleeperId)) || draftedNames.has(row.key),
     [draftedIds, draftedNames],
+  );
+
+  // ---- draft intelligence ----
+  const divergence = useMemo(() => marketDivergence(board, values), [board, values]);
+  const qbCtx = useMemo(
+    () => qbMarketContext(bundle.league, bundle.rosters, bundle.players, values),
+    [bundle, values],
+  );
+  const needs = useMemo(
+    () => needMultipliers(bundle.league, bundle.rosters, bundle.players, values, qbCtx),
+    [bundle, values, qbCtx],
+  );
+  const availableRows = useMemo(
+    () => board.filter((r) => !isDrafted(r) && !(r.sleeperId && rosteredIds.has(r.sleeperId))),
+    [board, isDrafted, rosteredIds],
+  );
+  const upcoming = useMemo(
+    () =>
+      draft && myTeam ? upcomingPicks(draft, bundle.tradedPicks, picks.length, myTeam.rosterId) : null,
+    [draft, bundle.tradedPicks, picks.length, myTeam],
+  );
+  const survival = useMemo(
+    () =>
+      upcoming && upcoming.myNextPick != null
+        ? survivalOdds(availableRows, upcoming.interveningRosters, needs)
+        : null,
+    [availableRows, upcoming, needs],
+  );
+  const liveDrafting = draft?.status === "drafting";
+  const myTurn = liveDrafting && !!onClockTeam?.isMine;
+  const marketSteal = useMemo(() => {
+    let best: { row: ConsensusRow; div: number } | null = null;
+    for (const row of availableRows) {
+      const d = divergence.get(row.key);
+      if (!d || d.divergence < 5 || d.marketRank > 30) continue;
+      if (!best || d.divergence > best.div) best = { row, div: d.divergence };
+    }
+    return best;
+  }, [availableRows, divergence]);
+  const wontLast = useMemo(
+    () =>
+      survival
+        ? availableRows
+            .slice(0, 15)
+            .filter((r) => (survival.get(r.key) ?? 1) < 0.45)
+            .slice(0, 3)
+        : [],
+    [availableRows, survival],
   );
 
   const filtered = useMemo(() => {
@@ -204,9 +285,12 @@ export function Draft() {
     }
     if (sortBy === "divisive") {
       rows = [...rows].sort((a, b) => b.sd - a.sd || a.avg - b.avg);
+    } else if (sortBy === "steals") {
+      const div = (r: ConsensusRow) => divergence.get(r.key)?.divergence ?? -1e9;
+      rows = [...rows].sort((a, b) => div(b) - div(a) || a.avg - b.avg);
     }
     return rows;
-  }, [board, posFilter, hideDrafted, hideRostered, sortBy, search, picks.length, isDrafted, rosteredIds]);
+  }, [board, posFilter, hideDrafted, hideRostered, sortBy, search, picks.length, isDrafted, rosteredIds, divergence]);
 
   const visible = showAll ? filtered : filtered.slice(0, 60);
 
@@ -244,11 +328,70 @@ export function Draft() {
         />
       </div>
 
+      {liveDrafting && upcoming && (myTurn || wontLast.length > 0 || marketSteal) && (
+        <div className="card section" style={myTurn ? { borderColor: "var(--delta-up)" } : undefined}>
+          <h2>
+            {myTurn
+              ? `🚨 You're on the clock — pick ${nextPickNo}${onClock ? ` (R${onClock.round}.${String(onClock.slot).padStart(2, "0")})` : ""}`
+              : upcoming.myNextPick != null
+                ? `⏳ Your next pick is #${upcoming.myNextPick} — ${upcoming.interveningRosters.length} pick${upcoming.interveningRosters.length === 1 ? "" : "s"} before you`
+                : "Draft intel"}
+          </h2>
+          <ul className="advice-list">
+            {availableRows[0] && (
+              <li>
+                <span className="icon">🥇</span>
+                <span>
+                  Top of your board: <strong>{availableRows[0].displayName}</strong>{" "}
+                  {availableRows[0].position && <PosChip pos={availableRows[0].position} />}{" "}
+                  <span className="muted small">consensus #{availableRows[0].consensus}</span>
+                </span>
+              </li>
+            )}
+            {marketSteal && marketSteal.row.key !== availableRows[0]?.key && (
+              <li>
+                <span className="icon">💰</span>
+                <span>
+                  Market disagrees with your guides on <strong>{marketSteal.row.displayName}</strong>{" "}
+                  {marketSteal.row.position && <PosChip pos={marketSteal.row.position} />}{" "}
+                  <span className="muted small">
+                    market #{divergence.get(marketSteal.row.key)?.marketRank} vs consensus #
+                    {marketSteal.row.consensus} — when they split, the market has the better recent record
+                  </span>
+                </span>
+              </li>
+            )}
+            {wontLast.map((r) => (
+              <li key={r.key}>
+                <span className="icon">⏱️</span>
+                <span>
+                  <strong>{r.displayName}</strong> {r.position && <PosChip pos={r.position} />}{" "}
+                  <span className="muted small">
+                    only {Math.round((survival?.get(r.key) ?? 1) * 100)}% likely to last to your next
+                    pick — take now or lose him
+                  </span>
+                </span>
+              </li>
+            ))}
+            {qbCtx.dead && availableRows.some((r) => r.position === "QB" && r.consensus <= 10) && (
+              <li>
+                <span className="icon">⛔</span>
+                <span>
+                  <span className="muted small">{qbCtx.reason} Skip QBs regardless of board rank.</span>
+                </span>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
       <div className="card section">
         <h2>Draft guides</h2>
         <p className="muted small">
           Feed it every guide you can find — CSV, spreadsheet paste, or a ranked list copied out of
           a PDF ("12. Player Name", tiers welcome). Each source becomes a column in the consensus.
+          Fresh boards scraped {BUNDLED_AT} (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry) are
+          bundled — the ⚡ buttons load the {sf ? "superflex" : "1QB"} versions to match this league.
         </p>
         {guides.length > 0 && (
           <div className="guide-list">
@@ -262,6 +405,18 @@ export function Draft() {
           </div>
         )}
         <div className="pill-row" style={{ marginBottom: 0 }}>
+          <button
+            onClick={() => loadBundled(rookieSet)}
+            title={`Scraped ${BUNDLED_AT}: ${rookieSet.map((g) => g.name).join(", ")}`}
+          >
+            ⚡ Rookie guides ({rookieSet.length})
+          </button>
+          <button
+            onClick={() => loadBundled(overallSet)}
+            title={`Scraped ${BUNDLED_AT}: ${overallSet.map((g) => g.name).join(", ")}`}
+          >
+            ⚡ Overall dynasty guides ({overallSet.length})
+          </button>
           <button onClick={() => fileRef.current?.click()}>📄 Upload files</button>
           <button onClick={() => setShowPaste((v) => !v)}>Paste a guide</button>
           {bundle.demo && guides.length === 0 && loaded && (
@@ -350,9 +505,11 @@ export function Draft() {
                   {p}
                 </button>
               ))}
-              <button className={sortBy === "divisive" ? "active" : ""}
-                onClick={() => setSortBy(sortBy === "divisive" ? "consensus" : "divisive")}>
-                sort: {sortBy === "divisive" ? "most divisive" : "consensus"}
+              <button className={sortBy !== "consensus" ? "active" : ""}
+                onClick={() =>
+                  setSortBy(sortBy === "consensus" ? "divisive" : sortBy === "divisive" ? "steals" : "consensus")
+                }>
+                sort: {sortBy === "divisive" ? "most divisive" : sortBy === "steals" ? "market steals" : "consensus"}
               </button>
               {picks.length > 0 && (
                 <button className={hideDrafted ? "active" : ""} onClick={() => setHideDrafted((v) => !v)}>
@@ -385,6 +542,14 @@ export function Draft() {
                   <th className="right">Tier</th>
                   <th className="right">Value</th>
                   <th className="right">Market</th>
+                  <th className="right" title="Market rank vs consensus rank — positive means the market is higher on him than your guides">
+                    Δ mkt
+                  </th>
+                  {survival && (
+                    <th className="right" title="Chance he's still available at your next pick">
+                      Lasts
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -405,6 +570,9 @@ export function Draft() {
                               {!r.sleeperId && (
                                 <span className="muted small" title="Not matched to a Sleeper player"> · unmatched</span>
                               )}
+                              {qbCtx.dead && r.position === "QB" && (
+                                <span className="muted small" title={qbCtx.reason}> · no QB market</span>
+                              )}
                             </div>
                             {p && (
                               <div className="player-meta">
@@ -422,6 +590,19 @@ export function Draft() {
                       <td className="right num muted">{r.tier ?? "—"}</td>
                       <td className="right num">{v ? v.value : "—"}</td>
                       <td className="right num muted">{v?.market != null ? v.market.toLocaleString() : "—"}</td>
+                      {(() => {
+                        const d = divergence.get(r.key);
+                        return (
+                          <td className={`right num${d && d.divergence >= 5 ? " delta-up" : d && d.divergence <= -5 ? " delta-down" : " muted"}`}>
+                            {d ? (d.divergence > 0 ? `+${d.divergence}` : d.divergence) : "—"}
+                          </td>
+                        );
+                      })()}
+                      {survival && (
+                        <td className={`right num${!drafted && (survival.get(r.key) ?? 1) < 0.45 ? " delta-down" : " muted"}`}>
+                          {drafted ? "—" : survival.has(r.key) ? `${Math.round(survival.get(r.key)! * 100)}%` : "—"}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
