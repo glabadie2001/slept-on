@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppDataProvider, useAppData } from "./AppContext";
 import { clearConfig, loadConfig, saveConfig } from "./store/config";
 import type { AppConfig } from "./store/config";
@@ -11,7 +11,9 @@ import { Waivers } from "./views/Waivers";
 import { Trades } from "./views/Trades";
 import { Draft } from "./views/Draft";
 import { Dynasty } from "./views/Dynasty";
+import { Analytics } from "./views/Analytics";
 import { injuryAlerts } from "./lib/analysis";
+import { log } from "./lib/log";
 
 const TABS = [
   { id: "overview", label: "Overview", view: Overview },
@@ -30,6 +32,11 @@ function Shell({ onDisconnect }: { onDisconnect: () => void }) {
   const { bundle, myTeam, refresh } = useAppData();
   const [tab, setTab] = useState<TabId>("overview");
   const ActiveView = TABS.find((t) => t.id === tab)?.view ?? Overview;
+
+  const switchTab = useCallback((id: TabId) => {
+    log.info("ui", `Tab → ${id}`);
+    setTab(id);
+  }, []);
 
   const hasLineupIssue = useMemo(() => {
     if (!myTeam) return false;
@@ -58,7 +65,7 @@ function Shell({ onDisconnect }: { onDisconnect: () => void }) {
 
       <nav className="tabs" aria-label="Dashboard sections">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
+          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => switchTab(t.id)}>
             {t.label}
             {t.id === "team" && hasLineupIssue && <span className="badge-dot" title="Injured player in lineup" />}
           </button>
@@ -70,9 +77,21 @@ function Shell({ onDisconnect }: { onDisconnect: () => void }) {
   );
 }
 
+/** Hash-based hidden routes (kept off the nav bar; works under any base path). */
+function useHashRoute(): string {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return hash;
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(() => loadConfig());
   const [loadError, setLoadError] = useState<string | null>(null);
+  const hash = useHashRoute();
 
   const handleDone = useCallback((cfg: AppConfig) => {
     saveConfig(cfg);
@@ -90,6 +109,10 @@ export default function App() {
     setLoadError(message);
     setConfig(null);
   }, []);
+
+  // Unlisted diagnostics page — needs no league connection, so it renders
+  // before the setup gate.
+  if (hash === "#analytics") return <Analytics />;
 
   if (!config) return <Setup onDone={handleDone} initialError={loadError} />;
 

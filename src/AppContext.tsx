@@ -17,6 +17,7 @@ import { computePlayerValues } from "./lib/value";
 import { blendPlayerValues, blendedPickValue } from "./lib/market";
 import type { BlendedValue } from "./lib/market";
 import { buildTeams } from "./lib/analysis";
+import { log } from "./lib/log";
 import type { AppConfig } from "./store/config";
 import type { LeagueBundle, SleeperMatchup, SleeperTradedPick, TeamInfo } from "./types";
 
@@ -159,13 +160,28 @@ export function AppDataProvider({
   useEffect(() => {
     let cancelled = false;
     if (config.demo) {
+      log.info("league", "Demo league loaded");
       setBundle(buildDemoBundle());
       return;
     }
     setBundle(null);
+    const started = performance.now();
     loadRealBundle(config)
-      .then((b) => !cancelled && setBundle(b))
-      .catch((err) => !cancelled && onError(err instanceof Error ? err.message : String(err)));
+      .then((b) => {
+        if (cancelled) return;
+        log.info(
+          "league",
+          `Loaded ${b.league.name} (week ${b.week}) in ${Math.round(performance.now() - started)}ms`,
+          `${b.rosters.length} rosters · ${Object.keys(b.players).length} players · ${b.transactions.length} recent transactions`,
+        );
+        setBundle(b);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error("league", `League load failed: ${msg}`);
+        onError(msg);
+      });
     return () => {
       cancelled = true;
     };
@@ -184,7 +200,10 @@ export function AppDataProvider({
     };
   }, [leagueId]);
 
-  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  const refresh = useCallback(() => {
+    log.info("ui", "Manual refresh");
+    setReloadKey((k) => k + 1);
+  }, []);
 
   const setMarketBlend = useCallback((b: number) => {
     const clamped = Math.min(1, Math.max(0, b));
@@ -216,8 +235,11 @@ export function AppDataProvider({
         : await fetchFantasyCalc(bundle.league);
       setMarket(data);
       await saveMarket(leagueId, data);
+      log.info("market", `Market values synced (${data.source}) — ${data.matched} players matched`);
     } catch (err) {
-      setMarketError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error("market", `Market sync failed: ${msg}`);
+      setMarketError(msg);
     } finally {
       setMarketSyncing(false);
     }

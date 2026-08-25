@@ -195,6 +195,27 @@ td.right, th.right { text-align: right; }
 .delta-up { color: var(--delta-up); font-weight: 600; }
 .delta-down { color: var(--s8-red); font-weight: 600; }
 
+/* ---- roster management (My Team) ---- */
+.hold-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.hold-badge.young { color: var(--delta-up); border: 1px solid var(--delta-up); }
+.hold-badge.sell { color: var(--warning); border: 1px solid var(--warning); }
+.irrev-warning {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  padding: 3px 8px;
+  display: inline-block;
+}
+
 /* ---- bars (power rankings, win prob) ---- */
 .mini-bar {
   height: 8px;

@@ -1,3 +1,5 @@
+import { log } from "../lib/log";
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export class HttpError extends Error {
@@ -27,10 +29,14 @@ export async function fetchJson<T>(
       lastErr = err;
       // Don't retry client errors other than 429.
       if (err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 429) {
+        log.error("http", `HTTP ${err.status}`, url);
         throw err;
       }
       if (attempt < retries) {
+        log.warn("http", `Retry ${attempt + 1}/${retries}: ${err instanceof Error ? err.message : "request failed"}`, url);
         await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+      } else {
+        log.error("http", `Failed after ${retries + 1} attempts: ${err instanceof Error ? err.message : String(err)}`, url);
       }
     } finally {
       clearTimeout(timer);

@@ -220,6 +220,28 @@ export function buildDemoBundle(): LeagueBundle {
     ];
   }
 
+  // ---- Roster-management storylines for my team (roster 1): a bench player
+  // stuck on the active roster with a season-ending injury while both IR slots
+  // sit open, plus a rookie class split between the taxi squad and the active
+  // roster — so IR hygiene, taxi stash/promote, and drop advice all light up.
+  {
+    const myR = rosters[0];
+    const starterSet = new Set((myR.starters ?? []).filter((s) => s !== "0"));
+    const benchIds = (myR.players ?? []).filter((id) => !starterSet.has(id));
+    const irGuy = benchIds.find((id) => players[id]?.position === "WR") ?? benchIds[0];
+    if (irGuy) {
+      players[irGuy].injury_status = "IR";
+      players[irGuy].injury_body_part = "ACL";
+    }
+    const rookies = benchIds.filter((id) => id !== irGuy && players[id]?.position !== "K" && players[id]?.position !== "DEF").slice(-2);
+    for (const id of rookies) {
+      players[id].age = 22;
+      players[id].years_exp = 0;
+      players[id].injury_status = null;
+    }
+    if (rookies[0]) myR.taxi = [rookies[0]]; // second rookie stays active → stash advice fires
+  }
+
   // ---- Full 14-week regular season: circle-method round robin, weeks 1-5
   // played out with strength-biased scores (so records/points are consistent
   // and the playoff simulator has real weekly data), week 6 = current. ----
