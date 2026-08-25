@@ -22,7 +22,7 @@ can be explored and screenshot-tested without a network connection.
 | Tab | Features |
 |---|---|
 | **Overview** | Power rankings (45% optimal-lineup strength, 30% dynasty roster value, 15% points, 10% record), stat tiles, every team's top assets, your team highlighted |
-| **My Team** | Current vs optimal lineup projection, concrete start/sit moves ("start X over Y, +2.2"), injury report with severity, bench ranked by value |
+| **My Team** | Current vs optimal lineup projection, concrete start/sit moves ("start X over Y, +2.2"), injury report with severity, bench ranked by value with hold/sell badges (🌱 young core / ⏳ sell window). Roster management (`lib/roster.ts`): IR hygiene (IR-eligible players wasting active spots, healthy players parked on IR), drop/add upgrade pairs (free agents that outclass a bench hold, margin-gated because drops are forever), taxi squad manager (promote/stash advice — promotions are held to a high bar and carry an explicit ⚠ irreversible warning), and a roster-crunch forecast (incoming rookie picks vs open spots, naming the weakest holds). All advice is read-only — you execute moves in Sleeper |
 | **Matchup** | Head-to-head slot-by-slot projections vs this week's opponent, win probability (normal model) |
 | **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
 | **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
@@ -52,6 +52,11 @@ src/
                      consensus aggregation with name matching + disagreement stats
     lineup.ts        lineup optimizer honoring league roster_positions (flex/superflex),
                      start/sit advice, availability handling (Out/IR = 0)
+    roster.ts        roster management: IR hygiene, drop/add upgrade pairs,
+                     taxi promote/stash advice (irreversible moves flagged),
+                     roster-crunch forecast, hold/sell badges
+    log.ts           client-side event log (ring buffer in localStorage) behind
+                     the unlisted /analytics page — nothing leaves the browser
     analysis.ts      power rankings, positional needs, waiver targets,
                      trade suggestions/evaluator/ledger, injury alerts, win prob
     simulator.ts     seeded Monte Carlo season sim: Normal(strength, σ) weekly scores,
