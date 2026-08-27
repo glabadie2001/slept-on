@@ -19,7 +19,7 @@ import type { BlendedValue } from "./lib/market";
 import { buildTeams } from "./lib/analysis";
 import { log } from "./lib/log";
 import type { AppConfig } from "./store/config";
-import type { LeagueBundle, SleeperMatchup, SleeperTradedPick, TeamInfo } from "./types";
+import type { LeagueBundle, SleeperMatchup, SleeperTradedPick, StatLine, TeamInfo } from "./types";
 
 export interface AppData {
   bundle: LeagueBundle;
@@ -109,6 +109,21 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
     });
   }
 
+  // Actual weekly stats for the last few *completed* weeks (the current week is
+  // partial mid-slate) — the Waiver Watchdog sniffs breakouts out of these.
+  const WATCHDOG_LOOKBACK = 5;
+  const statWeeks = isOffseason
+    ? []
+    : Array.from({ length: WATCHDOG_LOOKBACK }, (_, i) => week - 1 - i).filter((w) => w >= 1);
+  const recentStatArrays = await Promise.all(
+    statWeeks.map((w) => sleeper.getWeekStats(league.season, w)),
+  );
+  const recentStats: Record<number, Record<string, StatLine>> = {};
+  statWeeks.forEach((w, i) => {
+    const s = recentStatArrays[i];
+    if (s && Object.keys(s).length > 0) recentStats[w] = s;
+  });
+
   // Recent transactions: current week plus the two before it (or week 1 in offseason).
   const txWeeks = isOffseason ? [1] : [week, week - 1, week - 2].filter((w) => w >= 1);
   const txArrays = await Promise.all(txWeeks.map((w) => sleeper.getTransactions(cfg.leagueId, w).catch(() => null)));
@@ -133,6 +148,7 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
     schedule,
     transactions,
     tradedPicks: tradedPicks ?? [],
+    recentStats,
     trendingAdds: trendingAdds ?? [],
     trendingDrops: trendingDrops ?? [],
     week,

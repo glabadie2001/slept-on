@@ -216,6 +216,9 @@ export interface LeagueBundle {
   schedule: Record<number, SleeperMatchup[]>;
   transactions: SleeperTransaction[];
   tradedPicks: SleeperTradedPick[];
+  /** raw weekly stat lines for recently *completed* weeks (week -> player_id -> stats);
+   *  covers every NFL player, not just rostered ones — feeds the Waiver Watchdog */
+  recentStats: Record<number, Record<string, StatLine>>;
   trendingAdds: TrendingPlayer[];
   trendingDrops: TrendingPlayer[];
   /** which week matchups/projections refer to */

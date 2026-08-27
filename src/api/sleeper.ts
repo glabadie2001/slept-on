@@ -90,6 +90,25 @@ export const sleeper = {
     }
   },
 
+  /**
+   * Actual weekly stat lines for one completed week (raw keys, so league custom
+   * scoring applies). Semi-official endpoint; returns {} on failure.
+   */
+  async getWeekStats(season: string, week: number): Promise<Record<string, StatLine>> {
+    const pos = SKILL_POSITIONS.map((p) => `position[]=${p}`).join("&");
+    try {
+      const rows = await fetchJson<ProjectionRow[]>(
+        `${COM}/stats/nfl/${season}/${week}?season_type=regular&${pos}&order_by=pts_ppr`,
+        { retries: 1 },
+      );
+      const out: Record<string, StatLine> = {};
+      for (const r of rows ?? []) if (r.player_id && r.stats) out[r.player_id] = r.stats;
+      return out;
+    } catch {
+      return {};
+    }
+  },
+
   /** Season stat totals for every player (used as baseline + projection fallback). */
   async getSeasonStats(season: string): Promise<Record<string, StatLine>> {
     // Preferred: api.sleeper.com rows. Fallback: legacy v1 map keyed by player id.

@@ -25,7 +25,7 @@ can be explored and screenshot-tested without a network connection.
 | **My Team** | Current vs optimal lineup projection, concrete start/sit moves ("start X over Y, +2.2"), injury report with severity, bench ranked by value with hold/sell badges (🌱 young core / ⏳ sell window). Roster management (`lib/roster.ts`): IR hygiene (IR-eligible players wasting active spots, healthy players parked on IR), drop/add upgrade pairs (free agents that outclass a bench hold, margin-gated because drops are forever), taxi squad manager (promote/stash advice — promotions are held to a high bar and carry an explicit ⚠ irreversible warning), and a roster-crunch forecast (incoming rookie picks vs open spots, naming the weakest holds). All advice is read-only — you execute moves in Sleeper |
 | **Matchup** | Head-to-head slot-by-slot projections vs this week's opponent, win probability (normal model) |
 | **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
-| **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
+| **Waivers** | **Waiver Watchdog** (`lib/watchdog.ts`): breakout detector over recent weeks' actual stat lines for every NFL player — flags free agents whose points spiked past their own baseline with opportunity (targets+carries) climbing week over week, tiered 🚨 breaking-out / 👀 worth-watching with plain-English reasons ("22.6 pts in wk 4 vs 5.3 avg · opportunity up 3 straight weeks · rookie WR"); plus free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
 | **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values — all market-aware once a value source is synced |
 | **Draft** | Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns; bundled scraped guides (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry — rookie + overall, superflex/1QB auto-matched to the league, see `src/data/bundledGuides.ts`) load with one click; "where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock); draft intel (`lib/draftIntel.ts`): market-vs-consensus divergence column + "market steals" sort, survival odds ("Lasts %" to your next pick, need-weighted over the teams picking before you, traded picks honored), dead-QB-market detection for 1QB leagues, and an on-the-clock alert card |
 | **Dynasty** | Value-weighted core age vs league, contend/rebuild window call, draft-pick capital, young-core and sell-window lists |
@@ -59,6 +59,8 @@ src/
                      the unlisted /analytics page — nothing leaves the browser
     analysis.ts      power rankings, positional needs, waiver targets,
                      trade suggestions/evaluator/ledger, injury alerts, win prob
+    watchdog.ts      Waiver Watchdog: breakout detection from recent weekly stat
+                     lines (spike vs own baseline, usage streaks, add trends, youth)
     simulator.ts     seeded Monte Carlo season sim: Normal(strength, σ) weekly scores,
                      standings w/ tiebreaks, reseeded bracket, leverage conditioning
     __tests__/       vitest suite for the sim engine, market parsing/blending, demo data
@@ -68,7 +70,7 @@ src/
   views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Draft, Dynasty
 ```
 
-Run `npm test` for the simulation/market/guides unit suite (38 tests, no network needed).
+Run `npm test` for the simulation/market/guides/watchdog unit suite (79 tests, no network needed).
 
 Design notes:
 

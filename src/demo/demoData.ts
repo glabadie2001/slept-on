@@ -125,6 +125,14 @@ export function buildDemoBundle(): LeagueBundle {
   mine.sort((a, b) => (pool.find((p) => p.id === b)?.ppg ?? 0) - (pool.find((p) => p.id === a)?.ppg ?? 0));
   rosterPlayers[6].push(...mine.splice(0, 1));
 
+  // The next Puka: a rookie WR nobody drafted whose role explodes over weeks
+  // 1-5 (added after the draft loop above, so he's guaranteed a free agent).
+  // The Waiver Watchdog exists to catch exactly this player.
+  const breakout = addPlayer("WR", 4, { name: "Keon Sparks", age: 22 });
+  players[breakout.id].years_exp = 0;
+  players[breakout.id].injury_status = null;
+  players[breakout.id].injury_body_part = null;
+
   const scoring: Record<string, number> = {
     pass_yd: 0.04, pass_td: 4, pass_int: -1, rush_yd: 0.1, rush_td: 6,
     rec: 0.5, rec_yd: 0.1, rec_td: 6, bonus_rec_te: 0.5, fum_lost: -2,
@@ -313,6 +321,46 @@ export function buildDemoBundle(): LeagueBundle {
 
   const matchups: SleeperMatchup[] = schedule[CURRENT_WEEK];
 
+  // ---- Weekly stat lines for the completed weeks (Waiver Watchdog fuel).
+  // Every player gets a noisy per-game line around his true ppg; the planted
+  // breakout rookie gets a hand-authored target/points ramp instead.
+  const weeklyLine = (pos: string, ppg: number, mult: number): StatLine => {
+    const per = statsForPpg(pos, ppg);
+    const line: StatLine = Object.fromEntries(
+      Object.entries(per)
+        .filter(([k]) => k !== "gp")
+        .map(([k, v]) => [k, Math.round(v * mult * 100) / 100]),
+    );
+    if (pos === "WR" || pos === "TE" || pos === "RB") line.rec_tgt = Math.round((line.rec ?? 0) * 1.5);
+    if (pos === "RB") line.rush_att = Math.round((line.rush_yd ?? 0) / 4.4);
+    if (pos === "QB") {
+      line.pass_att = Math.round((line.pass_yd ?? 0) / 7.4);
+      line.rush_att = Math.round((line.rush_yd ?? 0) / 5);
+    }
+    return line;
+  };
+  const recentStats: Record<number, Record<string, StatLine>> = {};
+  for (let week = 1; week < CURRENT_WEEK; week++) {
+    const wk: Record<string, StatLine> = {};
+    for (const p of pool) {
+      if (p === breakout) continue;
+      wk[p.id] = weeklyLine(p.pos, p.ppg, 0.65 + rand() * 0.7);
+    }
+    recentStats[week] = wk;
+  }
+  // Keon Sparks' ramp: buried on the depth chart, then the WR1 goes down and
+  // the targets arrive — 2, 3, 6, 9, 13 — capped by a 23-point eruption.
+  const sparksWeeks: StatLine[] = [
+    { rec: 1, rec_yd: 8, rec_tgt: 2 },
+    { rec: 2, rec_yd: 21, rec_tgt: 3 },
+    { rec: 4, rec_yd: 48, rec_tgt: 6 },
+    { rec: 6, rec_yd: 83, rec_tgt: 9 },
+    { rec: 9, rec_yd: 131, rec_td: 1, rec_tgt: 13 },
+  ];
+  sparksWeeks.forEach((line, i) => {
+    recentStats[i + 1][breakout.id] = line;
+  });
+
   // The infamous trade, on the ledger.
   const transactions: SleeperTransaction[] = [
     {
@@ -336,9 +384,12 @@ export function buildDemoBundle(): LeagueBundle {
 
   const freeAgents = pool.filter((p) => !rosterPlayers.some((r) => r.includes(p.id)));
   const trendingAdds = freeAgents
+    .filter((p) => p !== breakout)
     .sort((a, b) => b.ppg - a.ppg)
-    .slice(0, 25)
-    .map((p, i) => ({ player_id: p.id, count: Math.floor(5000 / (i + 1)) }));
+    .slice(0, 24)
+    .map((p, i) => ({ player_id: p.id, count: Math.floor(5000 / (i + 2)) }));
+  // The league smells the breakout too: Sparks leads the 48h add counts.
+  trendingAdds.unshift({ player_id: breakout.id, count: 6200 });
 
   return {
     state: { week: 6, season: "2026", season_type: "regular", display_week: 6, league_season: "2026", previous_season: "2025" },
@@ -354,6 +405,7 @@ export function buildDemoBundle(): LeagueBundle {
     schedule,
     transactions,
     tradedPicks,
+    recentStats,
     trendingAdds,
     trendingDrops: trendingAdds.slice(10).map((t) => ({ ...t })),
     week: 6,

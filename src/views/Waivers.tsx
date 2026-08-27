@@ -2,12 +2,26 @@ import { useMemo, useState } from "react";
 import { useAppData } from "../AppContext";
 import { PlayerCell } from "../components";
 import { positionalNeeds, waiverTargets } from "../lib/analysis";
+import { waiverWatchdog } from "../lib/watchdog";
 
 const POS_FILTERS = ["ALL", "QB", "RB", "WR", "TE", "K", "DEF"];
 
 export function Waivers() {
   const { bundle, myTeam, values, projPts } = useAppData();
   const [posFilter, setPosFilter] = useState("ALL");
+
+  const watchdog = useMemo(
+    () =>
+      waiverWatchdog(
+        bundle.rosters,
+        bundle.players,
+        bundle.recentStats,
+        bundle.league.scoring_settings,
+        bundle.trendingAdds,
+        bundle.lastSeasonStats,
+      ),
+    [bundle],
+  );
 
   const { targets, needs } = useMemo(() => {
     const needs = myTeam
@@ -30,8 +44,55 @@ export function Waivers() {
   const faab = bundle.league.settings.waiver_budget ?? 0;
   const faabUsed = myTeam?.roster.settings.waiver_budget_used ?? 0;
 
+  const hasRecentStats = Object.keys(bundle.recentStats).length > 0;
+
   return (
     <div>
+      <div className="card section">
+        <h2>🐕 Waiver Watchdog</h2>
+        <p className="muted small">
+          Hunting the next Puka: free agents whose weekly points or opportunity just spiked past
+          their own baseline — flagged before season averages and market prices catch up.
+        </p>
+        {!hasRecentStats && (
+          <p className="muted">
+            The watchdog sleeps until there are completed weeks to sniff — check back once the
+            season is underway.
+          </p>
+        )}
+        {hasRecentStats && watchdog.length === 0 && (
+          <p className="muted">All quiet on the wire — no breakout footprints this week.</p>
+        )}
+        {hasRecentStats && watchdog.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Player</th>
+                  <th className="right">Last wk</th>
+                  <th className="right">Baseline</th>
+                  <th>Why the watchdog barked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {watchdog.map((a) => (
+                  <tr key={a.playerId}>
+                    <td title={a.tier === "breakout" ? "Breaking out now" : "Worth watching"}>
+                      {a.tier === "breakout" ? "🚨" : "👀"}
+                    </td>
+                    <td><PlayerCell playerId={a.playerId} /></td>
+                    <td className="right num">{a.lastWeekPts.toFixed(1)}</td>
+                    <td className="right num">{a.baselinePpg.toFixed(1)}</td>
+                    <td className="muted small">{a.signals.join(" · ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="grid cols-2 section">
         <div className="card">
           <h3>Your positional needs</h3>
