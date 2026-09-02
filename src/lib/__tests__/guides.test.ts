@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { aggregateGuides, buildNameIndex, parseGuide } from "../guides";
+import { fantasyCalcRowsToEntries, sleeperAdpKeys, sleeperAdpRowsToEntries } from "../../api/liveGuides";
+import type { SleeperLeague } from "../../types";
 import type { Guide } from "../guides";
 import type { PlayerMap } from "../../types";
 
@@ -117,5 +119,49 @@ describe("aggregateGuides", () => {
       "2": { player_id: "2", full_name: "Josh Allen", position: "TE", search_rank: 900 },
     };
     expect(buildNameIndex(dupes).get("josh allen")).toBe("1");
+  });
+});
+
+describe("live guide feeds → entries", () => {
+  const players: PlayerMap = {
+    "10": { player_id: "10", full_name: "Ashton Jeanty", position: "RB" },
+    "11": { player_id: "11", full_name: "Travis Hunter", position: "WR" },
+    SF: { player_id: "SF", first_name: "San Francisco", last_name: "49ers", position: "DEF" },
+  };
+  const league = (positions: string[], rec: number): SleeperLeague =>
+    ({ roster_positions: positions, scoring_settings: { rec }, total_rosters: 12, season: "2026" }) as unknown as SleeperLeague;
+
+  it("FantasyCalc rows rank by value, skip picks, use Sleeper names", () => {
+    const entries = fantasyCalcRowsToEntries(
+      [
+        { player: { name: "Travis Hunter Jr.", sleeperId: "11", position: "WR" }, value: 5000 },
+        { player: { name: "2027 1st", sleeperId: null, position: null }, value: 6000 },
+        { player: { name: "Ashton Jeanty", sleeperId: "10", position: "RB" }, value: 9000 },
+      ],
+      players,
+    );
+    expect(entries.map((e) => e.name)).toEqual(["Ashton Jeanty", "Travis Hunter"]);
+    expect(entries[0]).toMatchObject({ rank: 1, position: "RB" });
+  });
+
+  it("Sleeper ADP keys follow QB format, scoring and draft mode", () => {
+    expect(sleeperAdpKeys(league(["QB", "FLEX"], 0.5), "redraft")[0]).toBe("adp_half_ppr");
+    expect(sleeperAdpKeys(league(["QB", "SUPER_FLEX"], 1), "redraft")[0]).toBe("adp_2qb");
+    expect(sleeperAdpKeys(league(["QB"], 1), "startup")[0]).toBe("adp_dynasty_ppr");
+    expect(sleeperAdpKeys(league(["QB"], 0), "rookie")[0]).toBe("adp_rookie");
+  });
+
+  it("Sleeper ADP rows fall back to the first key enough rows carry, sorted ascending", () => {
+    const rows = [
+      { player_id: "11", stats: { adp_half_ppr: 12.4 } },
+      { player_id: "10", stats: { adp_half_ppr: 1.2 } },
+      { player_id: "SF", stats: { adp_half_ppr: 150 } },
+      { player_id: "99", stats: { adp_half_ppr: 3 } }, // unknown player, skipped
+    ];
+    const out = sleeperAdpRowsToEntries(rows, players, ["adp_2qb", "adp_half_ppr"], 3);
+    expect(out.key).toBe("adp_half_ppr");
+    expect(out.entries.map((e) => e.name)).toEqual(["Ashton Jeanty", "Travis Hunter", "San Francisco 49ers"]);
+    expect(out.entries[2].position).toBe("DEF");
+    expect(sleeperAdpRowsToEntries(rows, players, ["adp_2qb"], 3).key).toBeNull();
   });
 });
