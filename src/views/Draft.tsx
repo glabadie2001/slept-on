@@ -54,6 +54,7 @@ import {
   BUNDLED_AT,
   OVERALL_GUIDES_1QB,
   OVERALL_GUIDES_SF,
+  REDRAFT_GUIDES,
   ROOKIE_GUIDES_1QB,
   ROOKIE_GUIDES_SF,
 } from "../data/bundledGuides";
@@ -280,7 +281,7 @@ export function Draft() {
           entries: b.entries,
           source: "bundled" as const,
           kind: inferKind({ name: b.name }),
-          scrapedAt: BUNDLED_AT,
+          scrapedAt: b.scrapedAt ?? BUNDLED_AT,
         })),
       ]);
       if (!quiet) setImportNote(`Loaded ${fresh.length} scraped guide${fresh.length === 1 ? "" : "s"} (${BUNDLED_AT}).`);
@@ -361,10 +362,10 @@ export function Draft() {
       setImportNote("Loaded the demo's 3 sample guides by default.");
       return;
     }
-    const n = mode === "rookie" ? loadBundled(rookieSet, true) : mode === "startup" ? loadBundled(overallSet, true) : 0;
+    const n = mode === "rookie" ? loadBundled(rookieSet, true) : mode === "startup" ? loadBundled(overallSet, true) : loadBundled(REDRAFT_GUIDES, true);
     const live = liveSourcesFor(mode);
     setImportNote(
-      `${n ? `Loaded ${n} bundled ${mode === "rookie" ? "rookie" : "dynasty"} guides (${BUNDLED_AT})` : "No bundled boards for this format"}${
+      `${n ? `Loaded ${n} bundled ${mode === "rookie" ? "rookie" : mode === "startup" ? "dynasty" : "redraft"} guide${n === 1 ? "" : "s"}` : "No bundled boards for this format"}${
         live.length ? ` · fetching ${live.map((s) => s.name).join(" + ")}…` : ""
       }`,
     );
@@ -754,7 +755,7 @@ export function Draft() {
           breadth (a 100-expert consensus outweighs one analyst; an analyst already inside it counts half). ADP
           exports and projection CSVs are detected on upload and become availability / projection guides.
           {mode === "redraft"
-            ? " Redraft boards come from live feeds (FantasyCalc redraft values, Sleeper's own ADP) matched to this league's scoring and QB format — the bundled boards are dynasty rankings and stay out of the way here."
+            ? ` PFF's 2026 redraft cheat sheet (${REDRAFT_GUIDES[0]?.scrapedAt ?? BUNDLED_AT}) is bundled and loads automatically; live feeds (FantasyCalc redraft values, Sleeper's own ADP) are matched to this league's scoring and QB format. The dynasty boards stay out of the way here.`
             : ` Boards scraped ${BUNDLED_AT} (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry) are bundled and load the ${sf ? "superflex" : "1QB"} versions automatically; live FantasyCalc rankings and Sleeper ADP refresh on demand.`}
         </p>
         {guides.length > 0 && (
@@ -827,6 +828,14 @@ export function Draft() {
           </ul>
         )}
         <div className="pill-row" style={{ marginBottom: 0 }}>
+          {mode === "redraft" && (
+            <button
+              onClick={() => loadBundled(REDRAFT_GUIDES)}
+              title={REDRAFT_GUIDES.map((g) => `${g.name} (${g.scrapedAt ?? BUNDLED_AT})`).join(", ")}
+            >
+              ⚡ Redraft guides ({REDRAFT_GUIDES.length})
+            </button>
+          )}
           {mode !== "redraft" && (
             <>
               <button

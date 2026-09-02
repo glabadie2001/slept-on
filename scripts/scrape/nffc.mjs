@@ -1,26 +1,36 @@
-// NFFC (high-stakes) ADP from the public HTML table. Sharp drafters; PPR-ish.
+// NFFC (high-stakes) ADP. Sharp drafters; PPR-ish. The public page renders an
+// empty table and fills it client-side from a POST to /adp.data.php, so we hit
+// that endpoint directly; it returns <tr> rows only (no header). Columns:
+// Rk, Player, Team, Pos, ADP, Min, Max, Diff, #Picks, Team, Pick/Bid.
 import { fetchText, loadIdMap, resolveSleeperId, toEntries, today } from "./lib.mjs";
 
-const strip = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+const strip = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#0?39;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
 export async function scrapeNffc(season, idMap) {
-  const url = `https://nfc.shgn.com/adp/football`;
-  const html = await fetchText(url);
-  const table = /<table[^>]*>([\s\S]*?)<\/table>/i.exec(html);
-  if (!table) throw new Error("NFFC: no <table> found — layout change?");
-  const rows = [...table[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
-    .map((m) => [...m[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => strip(c[1])))
-    .filter((cells) => cells.length >= 4);
-  const header = rows.shift().map((h) => h.toLowerCase());
-  const col = (...names) => header.findIndex((h) => names.some((n) => h.includes(n)));
-  const iName = col("player");
-  const iPos = col("pos");
-  const iAdp = col("adp", "avg");
-  if (iName < 0 || iAdp < 0) throw new Error(`NFFC: header ${JSON.stringify(header)} lacks player/adp columns`);
+  const params = new URLSearchParams({
+    team_id: "0",
+    time_period: "",
+    from_date: "",
+    to_date: "",
+    num_teams: "0", // all league sizes
+    draft_type: "-1", // all drafts (non-superflex)
+    sport: "football",
+    position: "",
+    league_teams: "0",
+    as_board: "",
+  });
+  const html = await fetchText("https://nfc.shgn.com/adp.data.php", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", referer: "https://nfc.shgn.com/adp/football" },
+    body: params.toString(),
+  });
+  const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
+    .map((m) => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((c) => strip(c[1])))
+    .filter((cells) => cells.length >= 5);
   const players = rows.map((c) => {
-    const name = c[iName].replace(/\s+\([A-Z]{2,3}\)$/, "");
-    const position = iPos >= 0 ? c[iPos].replace(/\d+$/, "").toUpperCase() : null;
-    return { name, position, adp: parseFloat(c[iAdp]), sleeperId: resolveSleeperId(idMap, { name, position }) };
+    const name = c[1];
+    const position = c[3].replace(/\d+$/, "").toUpperCase() || null;
+    return { name, position, adp: parseFloat(c[4]), sleeperId: resolveSleeperId(idMap, { name, position }) };
   });
   return { name: `NFFC ADP (${season}) — snapshot`, format: "ppr", scrapedAt: today(), entries: toEntries("NFFC", players) };
 }
