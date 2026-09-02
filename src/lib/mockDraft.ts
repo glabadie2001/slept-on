@@ -332,25 +332,60 @@ export function summarize(draft: MockDraft, valueOf: (pick: MockPick) => number)
     .sort((a, b) => b.value - a.value);
 }
 
+export interface MockAdp {
+  avg: number;
+  min: number;
+  max: number;
+  n: number;
+}
+
+export interface MockRun {
+  seed: number;
+  /** every pick of this timeline, base picks included */
+  picks: MockPick[];
+}
+
 export interface BatchResult {
   runs: number;
-  /** board key → average overall pick across runs (players never drafted are absent) */
-  adp: Map<string, { avg: number; n: number }>;
+  /** how many picks were already made when the batch started */
+  startedAt: number;
+  /** board key → overall-pick stats across runs (players never drafted are absent) */
+  adp: Map<string, MockAdp>;
   /** my pick number → board key → how often he was still available there */
   availability: Map<number, Map<string, number>>;
+  /** my picks still to come when the batch started */
   myPickNos: number[];
+  timelines: MockRun[];
+}
+
+export interface BatchOptions {
+  /** pick number → board key: force that pick in every run (decision conditioning) */
+  forced?: Record<number, string>;
+  /** how my un-forced picks are made: greedy (default) or sampled like a CPU */
+  myPolicy?: "greedy" | "sample";
+  /** how many board rows to tally availability for at each of my picks */
+  tallyDepth?: number;
 }
 
 /**
- * Run `n` seeded mocks from the same starting point (real picks kept), with my
- * picks made greedily. Yields a mock ADP for every board player and, for each
- * of my picks, how often each player was still on the board.
+ * Run `n` seeded mocks from the same starting point (base picks kept). Yields
+ * a mock ADP for every board player, availability odds at each of my picks,
+ * and every timeline's full pick list for roster/strength analysis.
  */
-export function runMocks(base: MockDraft, board: ConsensusRow[], model: NeedModel, n: number): BatchResult {
-  const adpSum = new Map<string, { sum: number; n: number }>();
+export function runMocks(
+  base: MockDraft,
+  board: ConsensusRow[],
+  model: NeedModel,
+  n: number,
+  opts: BatchOptions = {},
+): BatchResult {
+  const adpAcc = new Map<string, { sum: number; min: number; max: number; n: number }>();
   const availability = new Map<number, Map<string, number>>();
-  const myPickNos = myPickNumbers(base.setup);
-  for (const p of myPickNos) if (p > base.picks.length) availability.set(p, new Map());
+  const myPickNos = myPickNumbers(base.setup).filter((p) => p > base.picks.length);
+  for (const p of myPickNos) availability.set(p, new Map());
+  const forced = opts.forced ?? {};
+  const depth = opts.tallyDepth ?? 60;
+  const timelines: MockRun[] = [];
 
   for (let run = 0; run < n; run++) {
     const setup = { ...base.setup, seed: (base.setup.seed + run * 1_000_003) | 0 };
@@ -364,22 +399,45 @@ export function runMocks(base: MockDraft, board: ConsensusRow[], model: NeedMode
       const mine = slot.rosterId === setup.myRosterId;
       if (mine) {
         const tally = availability.get(slot.pickNo);
-        if (tally) for (const r of available.slice(0, 60)) tally.set(r.key, (tally.get(r.key) ?? 0) + 1);
+        if (tally) for (const r of available.slice(0, depth)) tally.set(r.key, (tally.get(r.key) ?? 0) + 1);
       }
       const need = needsFor(model, cur, slot.rosterId, slot.round);
-      const row = mine ? greedyChoose(available, need) : cpuChoose(available, need, pickRng(setup, slot.pickNo));
+      const forcedKey = forced[slot.pickNo];
+      const forcedRow = forcedKey ? available.find((r) => r.key === forcedKey) ?? null : null;
+      const row =
+        forcedRow ??
+        (mine
+          ? opts.myPolicy === "sample"
+            ? cpuChoose(available, need, pickRng(setup, slot.pickNo))
+            : greedyChoose(available, need)
+          : cpuChoose(available, need, pickRng(setup, slot.pickNo)));
       if (!row) break;
-      const acc = adpSum.get(row.key) ?? { sum: 0, n: 0 };
+      const acc = adpAcc.get(row.key) ?? { sum: 0, min: Infinity, max: 0, n: 0 };
       acc.sum += slot.pickNo;
+      acc.min = Math.min(acc.min, slot.pickNo);
+      acc.max = Math.max(acc.max, slot.pickNo);
       acc.n++;
-      adpSum.set(row.key, acc);
-      picks.push(toPick(slot, row, setup, true));
+      adpAcc.set(row.key, acc);
+      picks.push(toPick(slot, row, setup, !forcedRow || !mine));
       taken.add(row.key);
       cur = { setup, picks };
     }
+    timelines.push({ seed: setup.seed, picks });
   }
 
-  const adp = new Map<string, { avg: number; n: number }>();
-  for (const [k, a] of adpSum) adp.set(k, { avg: Math.round((a.sum / a.n) * 10) / 10, n: a.n });
-  return { runs: n, adp, availability, myPickNos };
+  const adp = new Map<string, MockAdp>();
+  for (const [k, a] of adpAcc) adp.set(k, { avg: Math.round((a.sum / a.n) * 10) / 10, min: a.min, max: a.max, n: a.n });
+  return { runs: n, startedAt: base.picks.length, adp, availability, myPickNos, timelines };
+}
+
+/** the top-k need-weighted choices for whoever is on the clock (candidates to compare) */
+export function rankedChoices(available: ConsensusRow[], need: Record<string, number>, k: number): ConsensusRow[] {
+  if (available.length === 0) return [];
+  const pool = considerationPool(available, need);
+  const weights = weightsFor(pool, need);
+  return pool
+    .map((row, i) => ({ row, w: weights[i] }))
+    .sort((a, b) => b.w - a.w)
+    .slice(0, k)
+    .map((x) => x.row);
 }
