@@ -223,7 +223,7 @@ export function Draft() {
   );
 
   const loadLive = useCallback(
-    async (source: LiveGuideSource, quiet = false): Promise<boolean> => {
+    async (source: LiveGuideSource, quiet = false): Promise<string | null> => {
       const name = liveGuideName(source, bundle.league, mode);
       setLiveBusy((s) => new Set(s).add(source.id));
       try {
@@ -239,12 +239,14 @@ export function Draft() {
         persist([...guidesRef.current.filter((g) => g.name !== name), guide]);
         log.info("draft", `Live guide loaded: ${name} (${entries.length})`);
         if (!quiet) setImportNote(`"${name}": ${entries.length} players (fetched just now).`);
-        return true;
+        return null;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const raw = err instanceof Error ? err.message : String(err);
+        // "Load failed" / "Failed to fetch" = the browser never got a response (network or CORS)
+        const msg = /load failed|failed to fetch|networkerror/i.test(raw) ? `${raw} (network or CORS block)` : raw;
         log.warn("draft", `Live guide failed: ${name} — ${msg}`);
-        setImportNote(`Couldn't fetch ${source.name}: ${msg}. You can still paste or upload that board.`);
-        return false;
+        if (!quiet) setImportNote(`Couldn't fetch ${source.name}: ${msg}. You can still paste or upload that board.`);
+        return `${source.name}: ${msg}`;
       } finally {
         setLiveBusy((s) => {
           const n = new Set(s);
@@ -278,11 +280,14 @@ export function Draft() {
         live.length ? ` · fetching ${live.map((s) => s.name).join(" + ")}…` : ""
       }`,
     );
-    void Promise.all(live.map((s) => loadLive(s, true))).then((ok) => {
-      const got = ok.filter(Boolean).length;
+    void Promise.all(live.map((s) => loadLive(s, true))).then((results) => {
+      const failures = results.filter((r): r is string => r != null);
+      const got = live.length - failures.length;
       if (live.length) {
         setImportNote(
-          `Default guides loaded: ${n} bundled · ${got}/${live.length} live feed${live.length === 1 ? "" : "s"}${got < live.length ? " (a feed failed — see below, or upload your own)" : ""}.`,
+          `Default guides loaded: ${n} bundled · ${got}/${live.length} live feed${live.length === 1 ? "" : "s"}.${
+            failures.length ? ` Couldn't fetch ${failures.join("; ")} — paste or upload that board instead.` : ""
+          }`,
         );
       }
     });
@@ -592,8 +597,8 @@ export function Draft() {
           Feed it every guide you can find — CSV, spreadsheet paste, or a ranked list copied out of
           a PDF ("12. Player Name", tiers welcome). Each source becomes a column in the consensus.
           {mode === "redraft"
-            ? " Redraft boards come from live feeds (FantasyCalc redraft values, FantasyFootballCalculator ADP) matched to this league's scoring and size — the bundled boards are dynasty rankings and stay out of the way here."
-            : ` Boards scraped ${BUNDLED_AT} (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry) are bundled and load the ${sf ? "superflex" : "1QB"} versions automatically; live FantasyCalc rankings refresh on demand.`}
+            ? " Redraft boards come from live feeds (FantasyCalc redraft values, Sleeper's own ADP) matched to this league's scoring and QB format — the bundled boards are dynasty rankings and stay out of the way here."
+            : ` Boards scraped ${BUNDLED_AT} (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry) are bundled and load the ${sf ? "superflex" : "1QB"} versions automatically; live FantasyCalc rankings and Sleeper ADP refresh on demand.`}
         </p>
         {guides.length > 0 && (
           <div className="guide-list">

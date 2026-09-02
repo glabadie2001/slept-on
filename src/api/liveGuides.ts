@@ -13,8 +13,8 @@ import type { PlayerMap, SleeperLeague } from "../types";
  *
  *  - FantasyCalc: trade-value rankings (dynasty or redraft, parameterized by
  *    superflex / PPR / league size). Rows carry sleeperId → exact name match.
- *  - Fantasy Football Calculator: real mock-draft ADP (redraft only), by
- *    scoring format; 2QB boards for superflex leagues.
+ *  - Sleeper ADP: the platform's own draft ADP (redraft by scoring format,
+ *    2QB for superflex, dynasty/rookie variants), from api.sleeper.com.
  */
 
 export interface LiveGuideSource {
@@ -77,61 +77,87 @@ export const fantasyCalcSource: LiveGuideSource = {
   },
 };
 
-// ---------- Fantasy Football Calculator ADP ----------
+// ---------- Sleeper ADP ----------
 
-interface FfcResponse {
-  players?: { name?: string; position?: string; team?: string; adp?: number }[];
+/**
+ * Sleeper's own draft ADP rides along on the season projections rows at
+ * api.sleeper.com (the host the app already uses for projections/stats), as
+ * stats.adp_* keyed by format. Rows are keyed by Sleeper player_id → exact
+ * matches, including team defenses.
+ */
+interface SleeperAdpRow {
+  player_id?: string;
+  stats?: Record<string, number | null | undefined> | null;
 }
 
-/** FFC team codes that differ from Sleeper's DEF player ids */
-const FFC_TEAM_TO_SLEEPER: Record<string, string> = { JAC: "JAX", LA: "LAR", WSH: "WAS" };
-
-export function ffcFormat(league: SleeperLeague): string {
-  if (isSuperflex(league)) return "2qb";
+/** preferred ADP stat keys for a league + mode, most specific first */
+export function sleeperAdpKeys(league: SleeperLeague, mode: DraftMode): string[] {
+  const sf = isSuperflex(league);
   const { ppr } = fantasyCalcParams(league);
-  return ppr >= 1 ? "ppr" : ppr >= 0.5 ? "half-ppr" : "standard";
+  const scoring = ppr >= 1 ? "ppr" : ppr >= 0.5 ? "half_ppr" : "std";
+  if (mode === "rookie") return ["adp_rookie", sf ? "adp_dynasty_2qb" : `adp_dynasty_${scoring}`, "adp_dynasty"];
+  if (mode === "startup") {
+    return sf
+      ? ["adp_dynasty_2qb", "adp_dynasty", `adp_dynasty_${scoring}`]
+      : [`adp_dynasty_${scoring}`, "adp_dynasty", "adp_dynasty_2qb"];
+  }
+  return sf ? ["adp_2qb", `adp_${scoring}`, "adp_ppr"] : [`adp_${scoring}`, "adp_ppr", "adp_half_ppr", "adp_std"];
 }
 
-export function ffcGuideName(league: SleeperLeague): string {
-  return `FFCalculator ADP (${ffcFormat(league)} · ${league.total_rosters || 12} tm) — live`;
+export function sleeperAdpGuideName(league: SleeperLeague, mode: DraftMode): string {
+  return `Sleeper ADP (${sleeperAdpKeys(league, mode)[0].replace(/^adp_/, "").replace(/_/g, " ")}) — live`;
 }
 
-export function ffcRowsToEntries(res: FfcResponse, players: PlayerMap): GuideEntry[] {
-  const rows = (res.players ?? [])
-    .filter((p) => p.name && typeof p.adp === "number")
-    .sort((a, b) => a.adp! - b.adp!);
-  return rows.map((p, i) => {
-    let pos = (p.position ?? "").toUpperCase() || null;
-    if (pos === "PK") pos = "K";
-    if (pos === "DST") pos = "DEF";
-    let name = p.name!;
-    if (pos === "DEF" && p.team) {
-      const id = FFC_TEAM_TO_SLEEPER[p.team.toUpperCase()] ?? p.team.toUpperCase();
-      name = sleeperName(players, id) ?? name;
+/** rows → ranked entries using the first ADP key that enough rows actually carry */
+export function sleeperAdpRowsToEntries(
+  rows: SleeperAdpRow[],
+  players: PlayerMap,
+  keys: string[],
+  minRows = 20,
+): { entries: GuideEntry[]; key: string | null } {
+  for (const key of keys) {
+    const ranked = rows
+      .filter((r) => r.player_id && typeof r.stats?.[key] === "number" && (r.stats[key] as number) > 0)
+      .sort((a, b) => (a.stats![key] as number) - (b.stats![key] as number));
+    if (ranked.length < minRows) continue;
+    const entries: GuideEntry[] = [];
+    for (const r of ranked) {
+      const name = sleeperName(players, r.player_id);
+      if (!name) continue;
+      entries.push({
+        name,
+        rank: entries.length + 1,
+        tier: null,
+        position: players[r.player_id!]?.position ?? null,
+      });
     }
-    return { name, rank: i + 1, tier: null, position: pos };
-  });
+    return { entries, key };
+  }
+  return { entries: [], key: null };
 }
 
-export const ffcAdpSource: LiveGuideSource = {
-  id: "ffc-adp",
-  name: "FFCalculator ADP",
-  modes: ["redraft"],
-  async fetch(league, players) {
-    const teams = league.total_rosters || 12;
-    const url = `https://fantasyfootballcalculator.com/api/v1/adp/${ffcFormat(league)}?teams=${teams}&year=${league.season}&position=all`;
-    const res = await fetchJson<FfcResponse>(url, { retries: 1, timeoutMs: 20_000 });
-    if (!res?.players?.length) throw new Error("FFCalculator returned no ADP rows");
-    return ffcRowsToEntries(res, players);
+export const sleeperAdpSource: LiveGuideSource = {
+  id: "sleeper-adp",
+  name: "Sleeper ADP",
+  modes: ["rookie", "startup", "redraft"],
+  async fetch(league, players, mode) {
+    const keys = sleeperAdpKeys(league, mode);
+    const pos = ["QB", "RB", "WR", "TE", "K", "DEF"].map((p) => `position[]=${p}`).join("&");
+    const url = `https://api.sleeper.com/projections/nfl/${league.season}?season_type=regular&${pos}&order_by=${keys[0]}`;
+    const rows = await fetchJson<SleeperAdpRow[]>(url, { retries: 1, timeoutMs: 30_000 });
+    if (!rows || rows.length === 0) throw new Error("Sleeper projections returned no rows");
+    const { entries, key } = sleeperAdpRowsToEntries(rows, players, keys);
+    if (!key) throw new Error(`Sleeper rows carry no ${keys.join("/")} ADP yet for ${league.season}`);
+    return entries;
   },
 };
 
-export const LIVE_SOURCES: LiveGuideSource[] = [fantasyCalcSource, ffcAdpSource];
+export const LIVE_SOURCES: LiveGuideSource[] = [fantasyCalcSource, sleeperAdpSource];
 
 export function liveSourcesFor(mode: DraftMode): LiveGuideSource[] {
   return LIVE_SOURCES.filter((s) => s.modes.includes(mode));
 }
 
 export function liveGuideName(source: LiveGuideSource, league: SleeperLeague, mode: DraftMode): string {
-  return source.id === "fantasycalc" ? fantasyCalcGuideName(league, mode) : ffcGuideName(league);
+  return source.id === "fantasycalc" ? fantasyCalcGuideName(league, mode) : sleeperAdpGuideName(league, mode);
 }
