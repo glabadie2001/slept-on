@@ -446,6 +446,33 @@ tr.drafted-row .player-name { text-decoration: line-through; }
 }
 .order-chip.mine { border-color: var(--s5-aqua); color: var(--s5-aqua); font-weight: 700; }
 
+.guide-chip { cursor: pointer; }
+.guide-chip.editing { outline: 2px solid var(--s1-blue); outline-offset: -1px; }
+.guide-chip .kind-tag {
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.guide-chip .kind-tag.off { text-decoration: line-through; }
+.guide-chip.kind-adp .kind-tag, .guide-chip.kind-history .kind-tag { color: var(--s4-yellow); border-color: var(--s4-yellow); }
+.guide-chip.kind-projection .kind-tag { color: var(--s5-aqua); border-color: var(--s5-aqua); }
+.guide-chip.kind-market .kind-tag { color: var(--s7-violet); border-color: var(--s7-violet); }
+.guide-editor {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.history-table { font-size: 12.5px; }
 .guide-chip.live { border-color: var(--s5-aqua); }
 .guide-chip.bundled { border-color: var(--s7-violet); }
 

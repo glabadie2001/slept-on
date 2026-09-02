@@ -90,6 +90,23 @@ export const sleeper = {
     }
   },
 
+  /**
+   * Season projections as raw stat lines (also carry Sleeper ADP as stats.adp_*).
+   * Semi-official endpoint; returns [] on failure.
+   */
+  async getSeasonProjections(season: string, orderBy = "adp_half_ppr"): Promise<ProjectionRow[]> {
+    const pos = SKILL_POSITIONS.map((p) => `position[]=${p}`).join("&");
+    try {
+      const rows = await fetchJson<ProjectionRow[]>(
+        `${COM}/projections/nfl/${season}?season_type=regular&${pos}&order_by=${orderBy}`,
+        { retries: 1, timeoutMs: 30_000 },
+      );
+      return rows ?? [];
+    } catch {
+      return [];
+    }
+  },
+
   /** Season stat totals for every player (used as baseline + projection fallback). */
   async getSeasonStats(season: string): Promise<Record<string, StatLine>> {
     // Preferred: api.sleeper.com rows. Fallback: legacy v1 map keyed by player id.

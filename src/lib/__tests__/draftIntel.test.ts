@@ -99,6 +99,7 @@ const row = (
   sd: 0,
   tier: null,
   count: 1,
+  nEff: 1,
   consensus,
 });
 

@@ -1,5 +1,6 @@
 import type { PlayerMap, SleeperLeague, SleeperTradedPick, StatLine } from "../types";
 import { seasonPpg } from "./scoring";
+import { projectionPpg } from "./projections";
 
 /**
  * Dynasty value model (transparent heuristic, 0–100 scale).
@@ -77,15 +78,24 @@ export interface ValueModelInputs {
   league: SleeperLeague;
   lastSeasonStats: Record<string, StatLine>;
   projections: Record<string, StatLine>;
+  /** full-season stat projections; when present they lead the production estimate */
+  seasonProjections?: Record<string, StatLine>;
 }
 
-/** Blend of last-season PPG and this-week projection (annualized) as "current production". */
+/**
+ * "Current production" PPG. A full-season projection (scored under league rules)
+ * leads when we have one — it already prices in role changes, injuries and
+ * rookies — blended with last season's actuals; otherwise last season blended
+ * with this week's projection.
+ */
 function productionPpg(
   playerId: string,
   inputs: ValueModelInputs,
 ): number {
   const scoring = inputs.league.scoring_settings;
   const last = seasonPpg(inputs.lastSeasonStats[playerId], scoring);
+  const season = projectionPpg(inputs.seasonProjections?.[playerId], scoring);
+  if (season > 0) return last > 0 ? 0.65 * season + 0.35 * last : season;
   const projStats = inputs.projections[playerId];
   let proj = 0;
   if (projStats) {

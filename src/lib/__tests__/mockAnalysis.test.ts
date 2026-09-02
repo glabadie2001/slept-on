@@ -51,6 +51,7 @@ const row = (i: number, position: string): ConsensusRow => ({
   sd: 0,
   tier: null,
   count: 1,
+  nEff: 1,
   consensus: i,
 });
 const positions = ["RB", "WR", "QB", "WR", "RB", "TE"];

@@ -6,8 +6,23 @@ import { normalizeName } from "../api/marketValues";
 import { sleeper } from "../api/sleeper";
 import { liveGuideName, liveSourcesFor } from "../api/liveGuides";
 import type { LiveGuideSource } from "../api/liveGuides";
-import { aggregateGuides, parseGuide } from "../lib/guides";
-import type { ConsensusRow, Guide } from "../lib/guides";
+import { fetchDraftHistory, loadCachedHistory } from "../api/draftHistory";
+import type { DraftHistoryBundle } from "../api/draftHistory";
+import {
+  AVAILABILITY_KINDS,
+  GUIDE_KIND_LABEL,
+  VALUE_KINDS,
+  buildBoard,
+  guideWarnings,
+  guideWeight,
+  inferKind,
+  parseAdpCsv,
+  parseGuide,
+} from "../lib/guides";
+import type { ConsensusRow, Guide, GuideKind } from "../lib/guides";
+import { parseProjectionCsv, projectionCsvEntries } from "../lib/projections";
+import { deriveTendencies, describePrior, priorsByRoster } from "../lib/draftHistory";
+import { BUNDLED_ADP } from "../data/bundledAdp";
 import {
   draftedPositionsFromPicks,
   marketDivergence,
@@ -51,6 +66,25 @@ function guidesKey(leagueId: string): string {
   return `draft_guides:${leagueId}`;
 }
 const autoloadKey = (leagueId: string) => `draft_guides_autoloaded:${leagueId}`;
+const weightsKey = (leagueId: string) => `draft_guide_weights:${leagueId}`;
+const shrinkKey = (leagueId: string) => `draft_history_shrink:${leagueId}`;
+const KINDS: GuideKind[] = ["expert", "projection", "market", "adp", "history"];
+
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // non-fatal
+  }
+}
 
 const SOURCE_ICON: Record<string, string> = { bundled: "⚡", live: "📡", sample: "🧪" };
 
@@ -68,6 +102,16 @@ export function Draft() {
   const [importNote, setImportNote] = useState<string | null>(null);
   const [liveBusy, setLiveBusy] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  const [weightOverrides, setWeightOverrides] = useState<Record<string, number>>(() => loadJson(weightsKey(leagueId), {}));
+  const [editingGuide, setEditingGuide] = useState<string | null>(null);
+  const setOverride = (id: string, w: number | null) => {
+    const next = { ...weightOverrides };
+    if (w == null) delete next[id];
+    else next[id] = w;
+    setWeightOverrides(next);
+    saveJson(weightsKey(leagueId), next);
+  };
+  const setGuideKind = (id: string, kind: GuideKind) => persist(guidesRef.current.map((g) => (g.id === id ? { ...g, kind } : g)));
   // guides state can change while async live fetches are in flight — merge via ref
   const guidesRef = useRef<Guide[]>([]);
   guidesRef.current = guides;
@@ -96,6 +140,26 @@ export function Draft() {
 
   const addGuide = useCallback(
     (name: string, text: string) => {
+      // A projection CSV (name + raw stat columns) is scored under this league's
+      // rules first; an ADP export becomes an availability guide; anything else
+      // is a ranked list.
+      const proj = parseProjectionCsv(text);
+      if (proj) {
+        const entries = projectionCsvEntries(proj, bundle.league.scoring_settings);
+        if (entries.length === 0) {
+          setImportNote(`"${name}": recognised projection columns (${proj.mapped.join(", ")}) but nothing scored above zero under this league's rules.`);
+          return false;
+        }
+        persist([
+          ...guidesRef.current,
+          { id: `g${Date.now()}-${Math.floor(Math.random() * 1e6)}`, name, addedAt: Date.now(), entries, source: "user", kind: "projection" },
+        ]);
+        setImportNote(
+          `"${name}": projections for ${entries.length} players scored with your league's scoring (${proj.mapped.length} stat columns${proj.unmapped.length ? `; ignored ${proj.unmapped.join(", ")}` : ""}).`,
+        );
+        return true;
+      }
+      const isAdp = parseAdpCsv(text) != null || /\badp\b/i.test(name);
       const { entries, skipped } = parseGuide(text);
       if (entries.length === 0) {
         setImportNote(`"${name}": no parsable lines (${skipped} skipped) — expected ranked names, one per line`);
@@ -107,12 +171,13 @@ export function Draft() {
         addedAt: Date.now(),
         entries,
         source: "user",
+        kind: isAdp ? "adp" : inferKind({ name }),
       };
       persist([...guidesRef.current, guide]);
-      setImportNote(`"${name}": ${entries.length} players${skipped ? ` (${skipped} lines skipped)` : ""}`);
+      setImportNote(`"${name}": ${entries.length} players${skipped ? ` (${skipped} lines skipped)` : ""} · ${GUIDE_KIND_LABEL[guide.kind!]} guide`);
       return true;
     },
-    [persist],
+    [persist, bundle.league.scoring_settings],
   );
 
   const onFiles = async (files: FileList | null) => {
@@ -214,6 +279,8 @@ export function Draft() {
           addedAt: Date.now() + i,
           entries: b.entries,
           source: "bundled" as const,
+          kind: inferKind({ name: b.name }),
+          scrapedAt: BUNDLED_AT,
         })),
       ]);
       if (!quiet) setImportNote(`Loaded ${fresh.length} scraped guide${fresh.length === 1 ? "" : "s"} (${BUNDLED_AT}).`);
@@ -221,6 +288,26 @@ export function Draft() {
     },
     [persist],
   );
+
+  // Bundled multi-platform ADP snapshots (src/data/bundledAdp.ts, written by `npm run scrape`)
+  const adpSnapshots = useMemo(() => {
+    const { ppr } = { ppr: bundle.league.scoring_settings.rec ?? 0 };
+    const fmt = mode === "rookie" ? "rookie" : mode === "startup" ? (sf ? "dynasty_sf" : "dynasty_1qb") : sf ? "2qb" : ppr >= 0.75 ? "ppr" : ppr >= 0.25 ? "half_ppr" : "std";
+    return BUNDLED_ADP.filter((b) => b.format === fmt);
+  }, [mode, sf, bundle.league.scoring_settings.rec]);
+  const loadAdpSnapshots = useCallback(() => {
+    const have = new Set(guidesRef.current.map((g) => g.name));
+    const fresh = adpSnapshots.filter((b) => !have.has(b.name));
+    if (fresh.length === 0) {
+      setImportNote("Those ADP snapshots are already loaded.");
+      return;
+    }
+    persist([
+      ...guidesRef.current,
+      ...fresh.map((b, i) => ({ id: `adp${Date.now()}-${i}`, name: b.name, addedAt: Date.now() + i, entries: b.entries, source: "bundled" as const, kind: "adp" as const, scrapedAt: b.scrapedAt })),
+    ]);
+    setImportNote(`Loaded ${fresh.length} ADP snapshot${fresh.length === 1 ? "" : "s"}.`);
+  }, [adpSnapshots, persist]);
 
   const loadLive = useCallback(
     async (source: LiveGuideSource, quiet = false): Promise<string | null> => {
@@ -234,6 +321,7 @@ export function Draft() {
           addedAt: Date.now(),
           entries,
           source: "live",
+          kind: source.kind,
         };
         // refresh replaces the previous pull of the same feed
         persist([...guidesRef.current.filter((g) => g.name !== name), guide]);
@@ -325,7 +413,57 @@ export function Draft() {
     onClock && draft?.slot_to_roster_id ? byRoster.get(draft.slot_to_roster_id[String(onClock.slot)]) : null;
 
   // ---- consensus board ----
-  const board = useMemo(() => aggregateGuides(guides, bundle.players), [guides, bundle.players]);
+  // Two boards from one pile of guides: what a player is WORTH (expert +
+  // projection + market) and when he actually GOES (ADP + league history).
+  const valueBoard = useMemo(
+    () => buildBoard(guides, bundle.players, { kinds: VALUE_KINDS, weights: weightOverrides }),
+    [guides, bundle.players, weightOverrides],
+  );
+  const availBoard = useMemo(
+    () => buildBoard(guides, bundle.players, { kinds: AVAILABILITY_KINDS, weights: weightOverrides }),
+    [guides, bundle.players, weightOverrides],
+  );
+  // Nothing on the value side (only ADP loaded)? Show the availability board rather than nothing.
+  const board = valueBoard.rows.length > 0 ? valueBoard.rows : availBoard.rows;
+  const cpuRank = useMemo(() => new Map(availBoard.rows.map((r) => [r.key, r.consensus])), [availBoard]);
+  const warnings = useMemo(() => guideWarnings(guides), [guides]);
+  const guideKind = (g: Guide) => inferKind(g);
+
+  // ---- league draft history → how your leaguemates draft ----
+  const [history, setHistory] = useState<DraftHistoryBundle | null>(null);
+  const [histBusy, setHistBusy] = useState<string | null>(null);
+  const [histError, setHistError] = useState<string | null>(null);
+  const [shrink, setShrink] = useState<number>(() => loadJson(shrinkKey(leagueId), 2));
+  useEffect(() => {
+    let cancelled = false;
+    if (bundle.demo) return;
+    loadCachedHistory(leagueId).then((h) => {
+      if (!cancelled && h) setHistory(h);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [leagueId, bundle.demo]);
+  const loadHistory = async () => {
+    setHistBusy("starting…");
+    setHistError(null);
+    try {
+      const h = await fetchDraftHistory(bundle.league, setHistBusy);
+      setHistory(h);
+      log.info("draft", `Draft history: ${h.drafts.length} drafts across ${h.chain.length} seasons`);
+    } catch (err) {
+      setHistError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistBusy(null);
+    }
+  };
+  const currentUserIds = useMemo(() => new Set(bundle.rosters.map((r) => r.owner_id).filter((x): x is string => !!x)), [bundle.rosters]);
+  const tendencies = useMemo(
+    () => (history && history.drafts.length > 0 ? deriveTendencies(history.drafts, bundle.players, bundle.league.season, currentUserIds) : null),
+    [history, bundle.players, bundle.league.season, currentUserIds],
+  );
+  const rosterOwner = useMemo(() => new Map(bundle.rosters.map((r) => [r.roster_id, r.owner_id])), [bundle.rosters]);
+  const priors = useMemo(() => (tendencies ? priorsByRoster(tendencies, rosterOwner, shrink) : undefined), [tendencies, rosterOwner, shrink]);
 
   const rosteredIds = useMemo(() => {
     const s = new Set<string>();
@@ -399,12 +537,19 @@ export function Draft() {
       draft && myTeam ? upcomingPicks(draft, bundle.tradedPicks, picks.length, myTeam.rosterId) : null,
     [draft, bundle.tradedPicks, picks.length, myTeam],
   );
+  // Survival odds run over the board as the OTHER teams see it: ADP / history
+  // order when we have one, your value board otherwise.
+  const availableForOthers = useMemo(() => {
+    if (cpuRank.size === 0) return availableRows;
+    const key = (r: ConsensusRow) => cpuRank.get(r.key) ?? 1e6 + r.consensus;
+    return [...availableRows].sort((a, b) => key(a) - key(b));
+  }, [availableRows, cpuRank]);
   const survival = useMemo(
     () =>
       upcoming && upcoming.myNextPick != null
-        ? survivalOdds(availableRows, upcoming.interveningRosters, needs)
+        ? survivalOdds(availableForOthers, upcoming.interveningRosters, needs)
         : null,
-    [availableRows, upcoming, needs],
+    [availableForOthers, upcoming, needs],
   );
   const liveDrafting = draft?.status === "drafting";
   const myTurn = liveDrafting && !!onClockTeam?.isMine;
@@ -500,7 +645,11 @@ export function Draft() {
   return (
     <div>
       <div className="stat-row">
-        <StatTile label="Guides loaded" value={guides.length} sub={`${board.length} unique players ranked`} />
+        <StatTile
+          label="Guides loaded"
+          value={guides.length}
+          sub={`${board.length} players · ${valueBoard.nEff} independent value source${valueBoard.nEff === 1 ? "" : "s"}${availBoard.rows.length ? ` · ${availBoard.nEff} availability` : ""}`}
+        />
         <StatTile
           label="Draft status"
           value={draft ? draft.status.replace("_", " ") : draftLoading ? "…" : "none found"}
@@ -601,22 +750,81 @@ export function Draft() {
         <h2>Draft guides</h2>
         <p className="muted small">
           Feed it every guide you can find — CSV, spreadsheet paste, or a ranked list copied out of
-          a PDF ("12. Player Name", tiers welcome). Each source becomes a column in the consensus.
+          a PDF ("12. Player Name", tiers welcome). Each source becomes a column in the consensus, weighted by
+          breadth (a 100-expert consensus outweighs one analyst; an analyst already inside it counts half). ADP
+          exports and projection CSVs are detected on upload and become availability / projection guides.
           {mode === "redraft"
             ? " Redraft boards come from live feeds (FantasyCalc redraft values, Sleeper's own ADP) matched to this league's scoring and QB format — the bundled boards are dynasty rankings and stay out of the way here."
             : ` Boards scraped ${BUNDLED_AT} (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry) are bundled and load the ${sf ? "superflex" : "1QB"} versions automatically; live FantasyCalc rankings and Sleeper ADP refresh on demand.`}
         </p>
         {guides.length > 0 && (
           <div className="guide-list">
-            {guides.map((g) => (
-              <span key={g.id} className={`guide-chip${g.source ? ` ${g.source}` : ""}`} title={g.source ? `${g.source} guide` : "your upload"}>
-                {g.source && SOURCE_ICON[g.source] && <span>{SOURCE_ICON[g.source]}</span>}
-                <strong>{g.name}</strong>
-                <span className="muted small"> · {g.entries.length}</span>
-                <button onClick={() => removeGuide(g.id)} title="Remove guide">✕</button>
-              </span>
-            ))}
+            {guides.map((g) => {
+              const kind = guideKind(g);
+              const w = guideWeight(g, guides, weightOverrides);
+              const overridden = weightOverrides[g.id] != null;
+              return (
+                <span
+                  key={g.id}
+                  className={`guide-chip kind-${kind}${g.source ? ` ${g.source}` : ""}${editingGuide === g.id ? " editing" : ""}`}
+                  title={`${GUIDE_KIND_LABEL[kind]} guide · weight ${w}${overridden ? " (yours)" : " (default)"} · click to edit`}
+                  onClick={() => setEditingGuide(editingGuide === g.id ? null : g.id)}
+                >
+                  {g.source && SOURCE_ICON[g.source] && <span>{SOURCE_ICON[g.source]}</span>}
+                  <strong>{g.name}</strong>
+                  <span className="muted small"> · {g.entries.length}</span>
+                  <span className={`kind-tag${w === 0 ? " off" : ""}`}>{GUIDE_KIND_LABEL[kind]} · ×{w}</span>
+                  <button onClick={(e) => { e.stopPropagation(); removeGuide(g.id); }} title="Remove guide">✕</button>
+                </span>
+              );
+            })}
           </div>
+        )}
+        {editingGuide && guides.some((g) => g.id === editingGuide) && (() => {
+          const g = guides.find((x) => x.id === editingGuide)!;
+          const w = guideWeight(g, guides, weightOverrides);
+          return (
+            <div className="guide-editor">
+              <strong>{g.name}</strong>
+              <label className="muted small">
+                kind{" "}
+                <select value={guideKind(g)} onChange={(e) => setGuideKind(g.id, e.target.value as GuideKind)}>
+                  {KINDS.map((k) => (
+                    <option key={k} value={k}>{GUIDE_KIND_LABEL[k]}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="muted small">
+                weight{" "}
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  step={0.5}
+                  value={w}
+                  onChange={(e) => setOverride(g.id, Math.max(0, Math.min(10, Number(e.target.value) || 0)))}
+                  style={{ width: 64 }}
+                />
+              </label>
+              {weightOverrides[g.id] != null && (
+                <button className="linklike small" onClick={() => setOverride(g.id, null)}>reset to default</button>
+              )}
+              <span className="muted small">
+                Expert / projection / market guides build the value board; ADP and league history build the availability
+                board the CPU teams draft off. Weight 0 mutes a guide without removing it.
+              </span>
+            </div>
+          );
+        })()}
+        {warnings.length > 0 && (
+          <ul className="advice-list small" style={{ marginBottom: 10 }}>
+            {warnings.map((w, i) => (
+              <li key={i}>
+                <span className="icon">⚖️</span>
+                <span className="muted">{w.message}</span>
+              </li>
+            ))}
+          </ul>
         )}
         <div className="pill-row" style={{ marginBottom: 0 }}>
           {mode !== "redraft" && (
@@ -647,7 +855,14 @@ export function Draft() {
                 {guides.some((g) => g.name === liveGuideName(s, bundle.league, mode)) ? " (refresh)" : ""}
               </button>
             ))}
-          <button onClick={() => fileRef.current?.click()}>📄 Upload files</button>
+          {adpSnapshots.length > 0 && (
+            <button onClick={loadAdpSnapshots} title={adpSnapshots.map((b) => `${b.name} (${b.scrapedAt})`).join(", ")}>
+              📦 ADP snapshots ({adpSnapshots.length})
+            </button>
+          )}
+          <button onClick={() => fileRef.current?.click()} title="Ranked lists, ADP exports (Underdog/NFFC/DLF), or projection CSVs — all detected automatically">
+            📄 Upload files
+          </button>
           <button onClick={() => setShowPaste((v) => !v)}>Paste a guide</button>
           {bundle.demo && guides.length === 0 && loaded && (
             <button className="active" onClick={() => persist(buildSampleGuides(bundle.players))}>
@@ -867,6 +1082,89 @@ export function Draft() {
         </div>
       )}
 
+      {!bundle.demo && (
+        <div className="card section">
+          <h2>How your leaguemates draft</h2>
+          <p className="muted small">
+            This league's own past drafts (walked back through previous seasons), attributed to the <em>person</em>, not
+            the roster slot. Each owner's tendencies bend their CPU team in the mock and the "Lasts %" odds; with 1–3
+            drafts of evidence they're shrunk toward the league-wide pattern.
+          </p>
+          <div className="pill-row" style={{ alignItems: "center" }}>
+            <button className={history ? "" : "active"} onClick={() => void loadHistory()} disabled={histBusy != null}>
+              {histBusy ? `⏳ ${histBusy}` : history ? "↻ Reload history" : "📜 Load league draft history"}
+            </button>
+            {history && (
+              <span className="muted small">
+                {history.drafts.length} draft{history.drafts.length === 1 ? "" : "s"} across {history.chain.length} season
+                {history.chain.length === 1 ? "" : "s"}
+                {tendencies && tendencies.league.reach == null ? " · no Sleeper ADP for those seasons, so reach isn't measured" : ""}
+              </span>
+            )}
+            {tendencies && (
+              <label className="muted small" title="Pseudo-drafts of league-average evidence mixed into each owner: 0 trusts their record fully, 6 barely moves off the league prior">
+                shrinkage{" "}
+                <input type="range" min={0} max={6} step={1} value={shrink} onChange={(e) => { setShrink(Number(e.target.value)); saveJson(shrinkKey(leagueId), Number(e.target.value)); }} />{" "}
+                <span className="num">{shrink}</span>
+              </label>
+            )}
+          </div>
+          {histError && <div className="error-box">{histError}</div>}
+          {tendencies && priors && (
+            <div className="table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th className="right" title="drafts on record for this owner">Drafts</th>
+                    <th className="right" title="median round of the owner's first QB">1st QB</th>
+                    <th className="right" title="median round of the owner's first TE">1st TE</th>
+                    <th className="right" title="RB share of RB+WR picks in the first third of the draft">RB early</th>
+                    <th className="right" title="mean rounds ahead of Sleeper ADP the owner takes players (+ = reaches)">Reach</th>
+                    {mode !== "rookie" && <th className="right" title="share of full-roster-draft picks spent on rookies">Rookies</th>}
+                    <th>Reads as (after shrinkage)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teams.map((t) => {
+                    const own = t.ownerId ? tendencies.owners.get(t.ownerId) : undefined;
+                    const p = priors.get(t.rosterId);
+                    const rounds = defaultRounds(mode, bundle.league, draft);
+                    const rnd = (frac: number | null | undefined) => (frac == null ? "—" : `R${Math.max(1, Math.round(frac * rounds + 0.5))}`);
+                    const pct = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+                    return (
+                      <tr key={t.rosterId} className={t.isMine ? "mine" : ""}>
+                        <td><strong>{t.teamName}</strong>{t.isMine && <span className="small" style={{ color: "var(--s5-aqua)" }}> ← you</span>}</td>
+                        <td className="right num">{own?.drafts ?? 0}</td>
+                        <td className="right num">{rnd(own?.firstQb)}</td>
+                        <td className="right num">{rnd(own?.firstTe)}</td>
+                        <td className="right num">{pct(own?.rbShareEarly)}</td>
+                        <td className={`right num${own?.reach != null && own.reach > 0.5 ? " delta-up" : own?.reach != null && own.reach < -0.5 ? " delta-down" : ""}`}>
+                          {own?.reach == null ? "—" : `${own.reach > 0 ? "+" : ""}${own.reach.toFixed(1)}`}
+                        </td>
+                        {mode !== "rookie" && <td className="right num">{pct(own?.rookieShare)}</td>}
+                        <td className="muted small">{p ? describePrior(p).join(" · ") || (own ? "league-average drafter" : "no history — league prior") : ""}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td className="muted">League</td>
+                    <td className="right num muted">{tendencies.drafts}</td>
+                    <td className="right num muted">{tendencies.league.firstQb == null ? "—" : `R${Math.max(1, Math.round(tendencies.league.firstQb * defaultRounds(mode, bundle.league, draft) + 0.5))}`}</td>
+                    <td className="right num muted">{tendencies.league.firstTe == null ? "—" : `R${Math.max(1, Math.round(tendencies.league.firstTe * defaultRounds(mode, bundle.league, draft) + 0.5))}`}</td>
+                    <td className="right num muted">{tendencies.league.rbShareEarly == null ? "—" : `${Math.round(tendencies.league.rbShareEarly * 100)}%`}</td>
+                    <td className="right num muted">{tendencies.league.reach == null ? "—" : tendencies.league.reach.toFixed(1)}</td>
+                    {mode !== "rookie" && <td className="right num muted">{tendencies.league.rookieShare == null ? "—" : `${Math.round(tendencies.league.rookieShare * 100)}%`}</td>}
+                    <td className="muted small">the prior every owner is shrunk toward</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {history && history.drafts.length === 0 && <p className="muted">No completed drafts found in this league's history.</p>}
+        </div>
+      )}
+
       <MockDraft
         mode={mode}
         board={availableRows}
@@ -875,6 +1173,8 @@ export function Draft() {
         needBase={rookieNeeds}
         positions={positions}
         onAdp={setMockAdp}
+        cpuRank={cpuRank}
+        tendencies={priors}
       />
 
       <div className="card">

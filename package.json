@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "scrape": "node scripts/scrape/run.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
