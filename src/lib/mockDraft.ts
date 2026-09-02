@@ -1,4 +1,5 @@
 import { CONSIDERATION_SET, TASTE_DECAY, pickNeedMultipliers, pickPosition } from "./draftIntel";
+import type { TendencyPrior } from "./draftHistory";
 import type { DraftMode } from "./draftMode";
 import type { ConsensusRow } from "./guides";
 import { mulberry32 } from "./simulator";
@@ -57,6 +58,64 @@ export interface NeedModel {
   league: SleeperLeague;
   /** rookie mode: roster-derived base appetite per roster_id */
   base: Map<number, Record<string, number>>;
+  /**
+   * Availability order for CPU teams (board key → rank on the ADP / league-history
+   * board). When present, CPUs draft off this order instead of the value board;
+   * players missing from it sort after everyone ranked, by consensus.
+   */
+  cpuRank?: Map<string, number>;
+  /** per-roster drafting tendencies from league history (see lib/draftHistory.ts) */
+  tendencies?: Map<number, TendencyPrior>;
+  /** is this row a rookie (for rookieLean in full-roster dynasty drafts) */
+  isRookie?: (row: ConsensusRow) => boolean;
+}
+
+/** the board as a CPU team sees it: ADP / history order when we have one, else the value board */
+export function cpuView(available: ConsensusRow[], model: NeedModel): ConsensusRow[] {
+  const rank = model.cpuRank;
+  if (!rank || rank.size === 0) return available;
+  const key = (r: ConsensusRow) => rank.get(r.key) ?? 1e6 + r.consensus;
+  return [...available].sort((a, b) => key(a) - key(b));
+}
+
+export interface ChooseOptions {
+  /** taste decay multiplier: >1 = looks further down the board (reachier) */
+  decay?: number;
+  /** extra per-row multiplier (rookie lean etc.) */
+  rowBoost?: (row: ConsensusRow) => number;
+}
+
+/** apply an owner's tendency prior to their positional appetite at this point of the draft */
+export function applyTendency(
+  need: Record<string, number>,
+  prior: TendencyPrior | undefined,
+  drafted: string[],
+  round: number,
+  rounds: number,
+): Record<string, number> {
+  if (!prior) return need;
+  const out = { ...need };
+  const has = (pos: string) => drafted.includes(pos);
+  if (!has("QB")) out.QB = (out.QB ?? 1) * prior.qbEarly;
+  if (!has("TE")) out.TE = (out.TE ?? 1) * prior.teEarly;
+  if (round <= Math.ceil(rounds / 3)) {
+    out.RB = (out.RB ?? 1) * prior.rbLean;
+    out.WR = (out.WR ?? 1) * Math.max(0.4, 2 - prior.rbLean);
+  }
+  return out;
+}
+
+function cpuOptions(model: NeedModel, rosterId: number): ChooseOptions {
+  const prior = model.tendencies?.get(rosterId);
+  if (!prior) return {};
+  const rookie = model.isRookie;
+  return {
+    decay: prior.reach,
+    rowBoost:
+      rookie && Math.abs(prior.rookieLean - 1) > 0.02 && model.mode !== "rookie"
+        ? (row) => (rookie(row) ? prior.rookieLean : 1)
+        : undefined,
+  };
 }
 
 // ---------- setup ----------
@@ -196,12 +255,13 @@ export function considerationPool(available: ConsensusRow[], need: Record<string
 
 const TOP_SLICE = CONSIDERATION_SET + 4;
 
-function weightsFor(pool: ConsensusRow[], need: Record<string, number>): number[] {
+function weightsFor(pool: ConsensusRow[], need: Record<string, number>, opts: ChooseOptions = {}): number[] {
+  const decay = TASTE_DECAY * (opts.decay ?? 1);
   return pool.map((row, i) => {
     // reaches (appended past the top slice) are judged on need alone
-    const base = i < TOP_SLICE ? Math.exp(-i / TASTE_DECAY) : 1;
+    const base = i < TOP_SLICE ? Math.exp(-i / decay) : 1;
     const n = row.position ? (need[row.position] ?? 1) : 1;
-    return base * n;
+    return base * n * (opts.rowBoost?.(row) ?? 1);
   });
 }
 
@@ -210,10 +270,11 @@ export function cpuChoose(
   available: ConsensusRow[],
   need: Record<string, number>,
   rand: () => number,
+  opts: ChooseOptions = {},
 ): ConsensusRow | null {
   if (available.length === 0) return null;
   const pool = considerationPool(available, need);
-  const weights = weightsFor(pool, need);
+  const weights = weightsFor(pool, need, opts);
   const total = weights.reduce((s, w) => s + w, 0);
   if (total <= 0) return pool[0];
   let r = rand() * total;
@@ -264,6 +325,21 @@ export function makePick(draft: MockDraft, row: ConsensusRow, auto = false): Moc
   return { ...draft, picks: [...draft.picks, toPick(slot, row, draft.setup, auto)] };
 }
 
+/** one CPU team's pick: availability-ordered board, need × tendency prior, seeded dice */
+export function cpuPick(
+  available: ConsensusRow[],
+  need: Record<string, number>,
+  model: NeedModel,
+  draft: MockDraft,
+  slot: Slot,
+  rand: () => number,
+): ConsensusRow | null {
+  const prior = model.tendencies?.get(slot.rosterId);
+  const drafted = prior ? draftedPositions(draft.picks).get(slot.rosterId) ?? [] : [];
+  const adjusted = applyTendency(need, prior, drafted, slot.round, draft.setup.rounds);
+  return cpuChoose(cpuView(available, model), adjusted, rand, cpuOptions(model, slot.rosterId));
+}
+
 /**
  * Simulate CPU picks. With `untilMine`, stop when I'm on the clock; otherwise
  * auto-pick for me too (greedy) and run to the end of the draft.
@@ -286,7 +362,7 @@ export function advance(
     const need = needsFor(model, cur, slot.rosterId, slot.round);
     const row = mine
       ? greedyChoose(available, need)
-      : cpuChoose(available, need, pickRng(draft.setup, slot.pickNo));
+      : cpuPick(available, need, model, cur, slot, pickRng(draft.setup, slot.pickNo));
     if (!row) break;
     picks.push(toPick(slot, row, draft.setup, true));
     taken.add(row.key);
@@ -410,7 +486,7 @@ export function runMocks(
           ? opts.myPolicy === "sample"
             ? cpuChoose(available, need, pickRng(setup, slot.pickNo))
             : greedyChoose(available, need)
-          : cpuChoose(available, need, pickRng(setup, slot.pickNo)));
+          : cpuPick(available, need, model, cur, slot, pickRng(setup, slot.pickNo)));
       if (!row) break;
       const acc = adpAcc.get(row.key) ?? { sum: 0, min: Infinity, max: 0, n: 0 };
       acc.sum += slot.pickNo;

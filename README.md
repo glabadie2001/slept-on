@@ -27,7 +27,7 @@ can be explored and screenshot-tested without a network connection.
 | **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
 | **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
 | **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values — all market-aware once a value source is synced |
-| **Draft** | Works for **rookie, dynasty-startup and redraft/keeper drafts** — the draft type is auto-detected from the Sleeper league type + draft shape (`lib/draftMode.ts`) and can be overridden. Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns (dynasty value in rookie/startup mode, win-now production score in redraft). **Default guides load on first visit**: bundled scraped boards (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry — rookie + overall, superflex/1QB auto-matched, `src/data/bundledGuides.ts`) plus live feeds fetched in the browser (`api/liveGuides.ts`: FantasyCalc dynasty or redraft rankings matched to your QB/PPR/size settings; Sleeper's own ADP by scoring/QB format with dynasty and rookie variants), refreshable with one click. "Where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock); draft intel (`lib/draftIntel.ts`): market-vs-consensus divergence column + "market steals" sort, survival odds ("Lasts %" to your next pick, need-weighted over the teams picking before you, traded picks honored — roster-based needs in rookie drafts, picks-so-far needs in startup/redraft), dead-QB-market detection for 1QB rookie drafts, and an on-the-clock alert card. **Mock draft** (`lib/mockDraft.ts`): CPU teams draft off your consensus board with the same need-weighted taste model (fill starters, bench to taste, K/DEF in the closing rounds, no third QB in 1QB), you pick when you're up (or auto-pick), sim to end, undo, seeded/reproducible, continues from the real Sleeper picks mid-draft, draft-grid + haul scorecard. **Batch analysis** (`lib/mockAnalysis.ts`, 200 seeded timelines from wherever the mock stands): availability heatmap per pick (tier cliffs), realistic targets ranked by value × availability, mock ADP + range as a board column with a falls/reach Δ, positional run curves (median pick of the Nth RB/WR/QB/TE), your typical roster slot-by-slot with a position-mix breakdown, and best/median/worst timelines laid out in your league's lineup slots with a "what had to go right" luck read-out. **Decision-conditioned timelines** (`lib/timelines.ts`): pick the candidates at your next pick, force each into 60 futures, compare p10/median/p90 roster strength, average league rank, top-third share, and (redraft/startup) playoff + title odds from season sims of each candidate's median timeline; rookie drafts score by dynasty value instead, since four rookies don't move a season projection |
+| **Draft** | **Two boards from one pile of guides** (`lib/guides.ts`): every guide has a *kind* — expert, projection, market (KTC/FantasyCalc trade prices), ADP, league history — and a *breadth weight* (a 100-expert consensus counts for more than one analyst; an analyst already inside that consensus counts half; two collinear market prices share one weight; you can override any weight or kind per guide). Expert + projection + market build the **value board** (what a player is worth, with weighted σ and an *effective number of independent sources* next to it); ADP + league history build the **availability board** (when he actually goes) that the mock's CPU teams and the "Lasts %" odds draft off. **Projections as a guide** (`lib/projections.ts`): Sleeper's season projections and uploaded projection CSVs (FantasyPros/4for4/Footballguys-style columns) are scored with the league's exact scoring, ranked, and also lead the win-now production score. **League draft history** (`lib/draftHistory.ts`, `api/draftHistory.ts`): walks `previous_league_id` back, attributes picks to the *person*, derives each owner's QB/TE timing, early RB lean, reach vs that season's Sleeper ADP and rookie appetite, shrinks toward the league prior (knob), and bends their CPU team in the mock. Multi-platform ADP snapshots plug in via `npm run scrape` (`scripts/scrape/`: ESPN, NFFC, Underdog CSV; id-joined through the DynastyProcess id map; loud failure on layout changes). Works for **rookie, dynasty-startup and redraft/keeper drafts** — the draft type is auto-detected from the Sleeper league type + draft shape (`lib/draftMode.ts`) and can be overridden. Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns (dynasty value in rookie/startup mode, win-now production score in redraft). **Default guides load on first visit**: bundled scraped boards (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry — rookie + overall, superflex/1QB auto-matched, `src/data/bundledGuides.ts`) plus live feeds fetched in the browser (`api/liveGuides.ts`: FantasyCalc dynasty or redraft rankings matched to your QB/PPR/size settings; Sleeper's own ADP by scoring/QB format with dynasty and rookie variants), refreshable with one click. "Where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock); draft intel (`lib/draftIntel.ts`): market-vs-consensus divergence column + "market steals" sort, survival odds ("Lasts %" to your next pick, need-weighted over the teams picking before you, traded picks honored — roster-based needs in rookie drafts, picks-so-far needs in startup/redraft), dead-QB-market detection for 1QB rookie drafts, and an on-the-clock alert card. **Mock draft** (`lib/mockDraft.ts`): CPU teams draft off your consensus board with the same need-weighted taste model (fill starters, bench to taste, K/DEF in the closing rounds, no third QB in 1QB), you pick when you're up (or auto-pick), sim to end, undo, seeded/reproducible, continues from the real Sleeper picks mid-draft, draft-grid + haul scorecard. **Batch analysis** (`lib/mockAnalysis.ts`, 200 seeded timelines from wherever the mock stands): availability heatmap per pick (tier cliffs), realistic targets ranked by value × availability, mock ADP + range as a board column with a falls/reach Δ, positional run curves (median pick of the Nth RB/WR/QB/TE), your typical roster slot-by-slot with a position-mix breakdown, and best/median/worst timelines laid out in your league's lineup slots with a "what had to go right" luck read-out. **Decision-conditioned timelines** (`lib/timelines.ts`): pick the candidates at your next pick, force each into 60 futures, compare p10/median/p90 roster strength, average league rank, top-third share, and (redraft/startup) playoff + title odds from season sims of each candidate's median timeline; rookie drafts score by dynasty value instead, since four rookies don't move a season projection |
 | **Dynasty** | Value-weighted core age vs league, contend/rebuild window call, draft-pick capital, young-core and sell-window lists |
 
 ## Architecture
@@ -44,15 +44,24 @@ src/
                      sleeperId, parameterized by superflex/PPR/size), KTC-style
                      paste import (name matching), demo market; IndexedDB cache
     liveGuides.ts    live draft-guide feeds fetched from the browser and turned
-                     into consensus-board columns: FantasyCalc rankings (dynasty
-                     or redraft per draft mode), Sleeper ADP (api.sleeper.com)
+                     into consensus-board columns: FantasyCalc rankings (market),
+                     Sleeper ADP (availability), Sleeper season projections scored
+                     with league rules (projection)
+    draftHistory.ts  previous_league_id chain → every past draft's picks (+ that
+                     season's Sleeper ADP), cached per league
   lib/
     scoring.ts       league scoring_settings × raw stat lines (custom scoring is exact)
     value.ts         dynasty value model: production vs replacement × age curve
                      + youth upside; superflex-aware; pick values
     market.ts        market↔heuristic blending on the 0-100 scale (players + picks)
-    guides.ts        draft-guide parsing (forgiving: csv/tsv/ranked text/tiers) and
-                     consensus aggregation with name matching + disagreement stats
+    guides.ts        draft-guide parsing (forgiving: csv/tsv/ranked text/tiers, ADP
+                     exports) and weighted consensus: guide kinds, breadth weights,
+                     ECR-contributor downweighting, effective independent sources,
+                     value vs availability boards
+    projections.ts   projections as a guide kind: Sleeper season projections and
+                     uploaded projection CSVs scored with league scoring
+    draftHistory.ts  league draft history → per-owner tendencies, shrinkage, priors
+                     for the mock engine
     draftMode.ts     rookie / startup / redraft detection (league type + draft shape),
                      per-mode value yardstick, board positions, default rounds
     draftIntel.ts    pick math w/ traded picks, market divergence, survival odds,
@@ -83,7 +92,7 @@ src/
   views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Draft (+ MockDraft), Dynasty
 ```
 
-Run `npm test` for the simulation/market/guides/draft unit suite (104 tests, no network needed).
+Run `npm test` for the simulation/market/guides/draft unit suite (121 tests, no network needed).
 
 Design notes:
 
@@ -95,6 +104,21 @@ Design notes:
 - **Offseason-aware**: no fake matchups in July; waiver/trade/dynasty tools stay live.
 - The dynasty value model is a **transparent heuristic** (production, age, market
   interest) — rankings are explainable, not a black-box market price.
+
+## Regenerating bundled ADP snapshots
+
+```bash
+npm run scrape            # scripts/scrape/run.mjs → rewrites src/data/bundledAdp.ts
+npm run scrape 2027       # a specific season
+```
+
+Scrapers live in `scripts/scrape/` (Node 22, no dependencies): ESPN (public fantasy API),
+NFFC (public ADP table), Underdog (drop the app's rankings CSV export at
+`scripts/scrape/input/underdog.csv`). Each joins to Sleeper ids through the DynastyProcess
+id map (cached under `scripts/scrape/.cache/`), logs names it couldn't match, and refuses
+to emit a board under 100 rows — a layout change fails loudly instead of shipping an empty
+guide. Run it from a machine that can reach those sites; the bundled file is a snapshot,
+not a live feed.
 
 ## Roadmap (next session)
 

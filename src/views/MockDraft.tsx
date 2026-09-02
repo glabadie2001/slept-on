@@ -39,6 +39,7 @@ import type { ScoredTimeline } from "../lib/mockAnalysis";
 import { branchPoint, candidatesAt, compareCandidates, seasonFor } from "../lib/timelines";
 import type { CandidateOutcome } from "../lib/timelines";
 import { buildSeasonSchedule } from "../lib/simulator";
+import type { TendencyPrior } from "../lib/draftHistory";
 import type { SleeperDraft } from "../types";
 
 const BATCH_RUNS = 200;
@@ -68,6 +69,10 @@ interface Props {
   positions: string[];
   /** batch mock ADP for the consensus board (null when cleared) */
   onAdp?: (adp: Map<string, MockAdp> | null) => void;
+  /** availability order (ADP / league history) the CPU teams draft off; absent = value board */
+  cpuRank?: Map<string, number>;
+  /** per-roster drafting tendencies from league history */
+  tendencies?: Map<number, TendencyPrior>;
 }
 
 type BatchView = "board" | "runs" | "rosters" | "timelines";
@@ -79,7 +84,7 @@ type BatchView = "board" | "runs" | "rosters" | "timelines";
  * in progress, the mock continues from the real picks. The batch tools run
  * hundreds of seeded timelines from wherever the mock currently stands.
  */
-export function MockDraft({ mode, board, realPicks, sleeperDraft, needBase, positions, onAdp }: Props) {
+export function MockDraft({ mode, board, realPicks, sleeperDraft, needBase, positions, onAdp, cpuRank, tendencies }: Props) {
   const { bundle, teams, myTeam, values, projPts } = useAppData();
   const byRoster = useMemo(() => new Map(teams.map((t) => [t.rosterId, t])), [teams]);
   const rosterIds = useMemo(() => bundle.rosters.map((r) => r.roster_id), [bundle.rosters]);
@@ -129,9 +134,19 @@ export function MockDraft({ mode, board, realPicks, sleeperDraft, needBase, posi
   }, [useReal, sleeperDraft, bundle.tradedPicks, bundle.league.season, myRosterId, seed, rounds, rosterIds, mySlot, type]);
 
   const model: NeedModel = useMemo(
-    () => ({ mode, league: bundle.league, base: needBase }),
-    [mode, bundle.league, needBase],
+    () => ({
+      mode,
+      league: bundle.league,
+      base: needBase,
+      cpuRank: cpuRank && cpuRank.size > 0 ? cpuRank : undefined,
+      tendencies: tendencies && tendencies.size > 0 ? tendencies : undefined,
+      isRookie: (row: ConsensusRow) => (row.sleeperId ? bundle.players[row.sleeperId]?.years_exp === 0 : false),
+    }),
+    [mode, bundle.league, needBase, cpuRank, tendencies, bundle.players],
   );
+  const cpuNote = model.cpuRank
+    ? `CPU teams draft off the availability board (ADP${model.tendencies ? " + league history" : ""})`
+    : "CPU teams draft off your value board — load an ADP guide for realistic timing";
 
   const valueOf = (p: MockPick): number => modeValue(mode, p.sleeperId ? values[p.sleeperId] : null) ?? 0;
   const rowValue = (r: ConsensusRow): number | null => modeValue(mode, r.sleeperId ? values[r.sleeperId] : null);
@@ -369,8 +384,8 @@ export function MockDraft({ mode, board, realPicks, sleeperDraft, needBase, posi
     <div className="card section">
       <h2>Mock draft</h2>
       <p className="muted small">
-        {DRAFT_MODE_LABEL[mode]} · CPU teams pick from the top of your consensus board with need-weighted,
-        decaying taste (the same model behind the "Lasts %" column); you pick when you're up.
+        {DRAFT_MODE_LABEL[mode]} · {cpuNote}, with need-weighted decaying taste (the same model behind the
+        "Lasts %" column){model.tendencies ? " bent by each owner's drafting history" : ""}; you pick when you're up.
         {useReal && realPicks.length > 0 && ` Continues from the ${realPicks.length} picks already made on Sleeper.`}
         {useReal && realPicks.length === 0 && " Uses the real Sleeper draft order."}
         {!useReal && " No live Sleeper order — pick your slot and the rest is shuffled."}

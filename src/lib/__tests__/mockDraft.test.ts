@@ -142,6 +142,7 @@ const row = (key: string, consensus: number, position: string): ConsensusRow => 
   sd: 0,
   tier: null,
   count: 1,
+  nEff: 1,
   consensus,
 });
 

@@ -74,7 +74,7 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
   const lastSeasonYear =
     league.status === "complete" ? league.season : state.previous_season || String(Number(state.season) - 1);
 
-  const [users, rosters, players, matchups, tradedPicks, trendingAdds, trendingDrops, projRows, lastSeasonStats] =
+  const [users, rosters, players, matchups, tradedPicks, trendingAdds, trendingDrops, projRows, lastSeasonStats, seasonRows] =
     await Promise.all([
       sleeper.getLeagueUsers(cfg.leagueId),
       sleeper.getRosters(cfg.leagueId),
@@ -85,6 +85,7 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
       sleeper.getTrending("drop"),
       isOffseason ? Promise.resolve([]) : sleeper.getWeekProjections(league.season, week),
       sleeper.getSeasonStats(lastSeasonYear),
+      sleeper.getSeasonProjections(league.season),
     ]);
 
   if (!users || !rosters) throw new Error("League users/rosters unavailable");
@@ -118,6 +119,10 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
   for (const row of projRows) {
     if (row.player_id && row.stats) projections[row.player_id] = row.stats;
   }
+  const seasonProjections: Record<string, Record<string, number>> = {};
+  for (const row of seasonRows) {
+    if (row.player_id && row.stats) seasonProjections[row.player_id] = row.stats;
+  }
 
   return {
     state,
@@ -127,6 +132,7 @@ async function loadRealBundle(cfg: AppConfig): Promise<LeagueBundle> {
     players,
     myUserId: cfg.userId,
     projections,
+    seasonProjections,
     lastSeasonStats,
     lastSeasonYear,
     matchups: matchups ?? [],
@@ -222,6 +228,7 @@ export function AppDataProvider({
       league: bundle.league,
       lastSeasonStats: bundle.lastSeasonStats,
       projections: bundle.projections,
+      seasonProjections: bundle.seasonProjections,
     });
   }, [bundle]);
 

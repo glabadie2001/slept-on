@@ -207,6 +207,8 @@ export interface LeagueBundle {
   myUserId: string;
   /** week-level projections for the active/upcoming week, custom-scored */
   projections: Record<string, StatLine>;
+  /** this season's full-season stat projections (Sleeper), raw stat lines */
+  seasonProjections: Record<string, StatLine>;
   /** last completed season's per-player season stat totals (fallback + baselines) */
   lastSeasonStats: Record<string, StatLine>;
   lastSeasonYear: string;

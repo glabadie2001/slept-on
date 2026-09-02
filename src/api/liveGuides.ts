@@ -1,9 +1,10 @@
 import { fetchJson } from "./http";
 import { fantasyCalcParams } from "./marketValues";
 import type { DraftMode } from "../lib/draftMode";
-import type { GuideEntry } from "../lib/guides";
+import type { GuideEntry, GuideKind } from "../lib/guides";
+import { sleeperProjectionEntries } from "../lib/projections";
 import { isSuperflex } from "../lib/value";
-import type { PlayerMap, SleeperLeague } from "../types";
+import type { PlayerMap, ProjectionRow, SleeperLeague } from "../types";
 
 /**
  * Live draft guides: public ranking feeds fetched straight from the browser and
@@ -20,6 +21,8 @@ import type { PlayerMap, SleeperLeague } from "../types";
 export interface LiveGuideSource {
   id: string;
   name: string;
+  /** what the feed measures — decides which board (value / availability) it joins */
+  kind: GuideKind;
   /** which draft modes this source makes sense for */
   modes: DraftMode[];
   fetch: (league: SleeperLeague, players: PlayerMap, mode: DraftMode) => Promise<GuideEntry[]>;
@@ -54,9 +57,10 @@ export function fantasyCalcRowsToEntries(rows: FcRow[], players: PlayerMap, max 
     const pos = r.player!.position?.toUpperCase() ?? null;
     // picks ("2027 1st") and anything without a position aren't players
     if (!pos || /^\d{4}/.test(r.player!.name ?? "")) continue;
-    const name = sleeperName(players, r.player!.sleeperId) ?? r.player!.name;
+    const sid = r.player!.sleeperId ? String(r.player!.sleeperId) : null;
+    const name = sleeperName(players, sid) ?? r.player!.name;
     if (!name) continue;
-    out.push({ name, rank: out.length + 1, tier: null, position: pos });
+    out.push({ name, rank: out.length + 1, tier: null, position: pos, sleeperId: sid && players[sid] ? sid : null });
     if (out.length >= max) break;
   }
   return out;
@@ -65,6 +69,7 @@ export function fantasyCalcRowsToEntries(rows: FcRow[], players: PlayerMap, max 
 export const fantasyCalcSource: LiveGuideSource = {
   id: "fantasycalc",
   name: "FantasyCalc rankings",
+  kind: "market",
   modes: ["rookie", "startup", "redraft"],
   async fetch(league, players, mode) {
     const { numQbs, numTeams, ppr } = fantasyCalcParams(league);
@@ -129,6 +134,7 @@ export function sleeperAdpRowsToEntries(
         rank: entries.length + 1,
         tier: null,
         position: players[r.player_id!]?.position ?? null,
+        sleeperId: r.player_id!,
       });
     }
     return { entries, key };
@@ -139,6 +145,7 @@ export function sleeperAdpRowsToEntries(
 export const sleeperAdpSource: LiveGuideSource = {
   id: "sleeper-adp",
   name: "Sleeper ADP",
+  kind: "adp",
   modes: ["rookie", "startup", "redraft"],
   async fetch(league, players, mode) {
     const keys = sleeperAdpKeys(league, mode);
@@ -152,12 +159,42 @@ export const sleeperAdpSource: LiveGuideSource = {
   },
 };
 
-export const LIVE_SOURCES: LiveGuideSource[] = [fantasyCalcSource, sleeperAdpSource];
+// ---------- Sleeper season projections, scored with the league's rules ----------
+
+export function sleeperProjectionGuideName(league: SleeperLeague): string {
+  const { ppr } = fantasyCalcParams(league);
+  return `Sleeper ${league.season} projections (${ppr} PPR · league scoring) — live`;
+}
+
+export const sleeperProjectionSource: LiveGuideSource = {
+  id: "sleeper-proj",
+  name: "Sleeper projections",
+  kind: "projection",
+  modes: ["startup", "redraft"],
+  async fetch(league, players) {
+    const pos = ["QB", "RB", "WR", "TE", "K", "DEF"].map((p) => `position[]=${p}`).join("&");
+    const url = `https://api.sleeper.com/projections/nfl/${league.season}?season_type=regular&${pos}&order_by=adp_half_ppr`;
+    const rows = await fetchJson<ProjectionRow[]>(url, { retries: 1, timeoutMs: 30_000 });
+    if (!rows || rows.length === 0) throw new Error("Sleeper projections returned no rows");
+    const entries = sleeperProjectionEntries(rows, league.scoring_settings, players);
+    if (entries.length < 50) throw new Error(`Sleeper projections scored only ${entries.length} players under this league's rules`);
+    return entries;
+  },
+};
+
+export const LIVE_SOURCES: LiveGuideSource[] = [fantasyCalcSource, sleeperAdpSource, sleeperProjectionSource];
 
 export function liveSourcesFor(mode: DraftMode): LiveGuideSource[] {
   return LIVE_SOURCES.filter((s) => s.modes.includes(mode));
 }
 
 export function liveGuideName(source: LiveGuideSource, league: SleeperLeague, mode: DraftMode): string {
-  return source.id === "fantasycalc" ? fantasyCalcGuideName(league, mode) : sleeperAdpGuideName(league, mode);
+  switch (source.id) {
+    case "fantasycalc":
+      return fantasyCalcGuideName(league, mode);
+    case "sleeper-proj":
+      return sleeperProjectionGuideName(league);
+    default:
+      return sleeperAdpGuideName(league, mode);
+  }
 }

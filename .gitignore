@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 *.tsbuildinfo
+scripts/scrape/.cache/
+scripts/scrape/input/

@@ -379,6 +379,7 @@ export function buildDemoBundle(): LeagueBundle {
     players,
     myUserId: "u1",
     projections,
+    seasonProjections: {},
     lastSeasonStats,
     lastSeasonYear: "2025",
     matchups,
