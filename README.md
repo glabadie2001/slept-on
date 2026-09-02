@@ -113,12 +113,17 @@ npm run scrape 2027       # a specific season
 ```
 
 Scrapers live in `scripts/scrape/` (Node 22, no dependencies): ESPN (public fantasy API),
-NFFC (public ADP table), Underdog (drop the app's rankings CSV export at
+NFFC (POSTs to the endpoint the public ADP page fills itself from), Underdog (drop the app's rankings CSV export at
 `scripts/scrape/input/underdog.csv`). Each joins to Sleeper ids through the DynastyProcess
 id map (cached under `scripts/scrape/.cache/`), logs names it couldn't match, and refuses
 to emit a board under 100 rows — a layout change fails loudly instead of shipping an empty
 guide. Run it from a machine that can reach those sites; the bundled file is a snapshot,
 not a live feed.
+
+Redraft expert rankings are bundled separately as `REDRAFT_GUIDES` in
+`src/data/bundledGuides.ts` (currently PFF's 2026 draft cheat sheet, extracted from the
+printed PDF: abbreviated names resolved to Sleeper ids via position + team + initial + last
+name) and load automatically in redraft mode.
 
 ## Roadmap (next session)
 
