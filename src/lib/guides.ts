@@ -14,11 +14,15 @@ export interface GuideEntry {
   position: string | null;
 }
 
+export type GuideSource = "user" | "bundled" | "live" | "sample";
+
 export interface Guide {
   id: string;
   name: string;
   addedAt: number;
   entries: GuideEntry[];
+  /** where it came from (absent on guides stored before this field existed = user) */
+  source?: GuideSource;
 }
 
 const POSITIONS = new Set(["QB", "RB", "WR", "TE", "K", "DEF", "DST", "PK"]);

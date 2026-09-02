@@ -125,6 +125,37 @@ export function buildDemoBundle(): LeagueBundle {
   mine.sort((a, b) => (pool.find((p) => p.id === b)?.ppg ?? 0) - (pool.find((p) => p.id === a)?.ppg ?? 0));
   rosterPlayers[6].push(...mine.splice(0, 1));
 
+  // ---- Incoming rookie class (next year's rookie draft): unrostered, no NFL
+  // team yet (so waivers ignore them), no stats — value comes from draft-capital
+  // proxy (search_rank) alone. The Draft tab's sample guides rank this class.
+  const ROOKIE_POSITIONS = ["RB", "WR", "WR", "RB", "QB", "WR", "TE", "RB", "WR", "QB", "WR", "TE"];
+  for (let i = 0; i < 52; i++) {
+    const pos = ROOKIE_POSITIONS[i % ROOKIE_POSITIONS.length];
+    const id = String(nextId++);
+    let name: string;
+    do {
+      name = `${FIRST[Math.floor(rand() * FIRST.length)]} ${LAST[Math.floor(rand() * LAST.length)]}`;
+    } while (usedNames.has(name));
+    usedNames.add(name);
+    const [first, ...rest] = name.split(" ");
+    players[id] = {
+      player_id: id,
+      first_name: first,
+      last_name: rest.join(" "),
+      full_name: name,
+      position: pos,
+      fantasy_positions: [pos],
+      team: null,
+      age: 21 + Math.floor(rand() * 3),
+      years_exp: 0,
+      status: "Active",
+      injury_status: null,
+      injury_body_part: null,
+      // class rank → market interest; top of the class rivals mid-tier vets
+      search_rank: 70 + i * 6 + Math.floor(rand() * 12),
+    };
+  }
+
   const scoring: Record<string, number> = {
     pass_yd: 0.04, pass_td: 4, pass_int: -1, rush_yd: 0.1, rush_td: 6,
     rec: 0.5, rec_yd: 0.1, rec_td: 6, bonus_rec_te: 0.5, fum_lost: -2,

@@ -27,7 +27,7 @@ can be explored and screenshot-tested without a network connection.
 | **Playoffs** | Seeded Monte Carlo over the remaining schedule: playoff/bye/title odds, seed distribution, per-game leverage ("+21% if you win this one"). Knobs: sim count, results↔projections strength blend, recency half-life, score volatility σ, playoff-spot & median-win overrides, forced W/L what-ifs, per-team ±ppg boosts (trade scenarios), re-rollable seed. Preseason = synthetic round-robin fallback |
 | **Waivers** | Free agents ranked by dynasty value + weekly projection + league-wide add trends, boosted toward your weakest positions; FAAB tracker |
 | **Trades** | Suggested trades (partner surplus ↔ your need, priced to be acceptable), interactive trade analyzer with verdicts, trade ledger grading completed trades at today's values — all market-aware once a value source is synced |
-| **Draft** | Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns; bundled scraped guides (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry — rookie + overall, superflex/1QB auto-matched to the league, see `src/data/bundledGuides.ts`) load with one click; "where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock); draft intel (`lib/draftIntel.ts`): market-vs-consensus divergence column + "market steals" sort, survival odds ("Lasts %" to your next pick, need-weighted over the teams picking before you, traded picks honored), dead-QB-market detection for 1QB leagues, and an on-the-clock alert card |
+| **Draft** | Works for **rookie, dynasty-startup and redraft/keeper drafts** — the draft type is auto-detected from the Sleeper league type + draft shape (`lib/draftMode.ts`) and can be overridden. Guide aggregator: upload/paste every draft guide you can find (CSV, spreadsheet, ranked lists from PDFs, tiers) → one consensus board with avg rank, range, disagreement σ, guide coverage, and your value/market columns (dynasty value in rookie/startup mode, win-now production score in redraft). **Default guides load on first visit**: bundled scraped boards (FantasyPros ECR, KeepTradeCut, CBS, Matthew Berry — rookie + overall, superflex/1QB auto-matched, `src/data/bundledGuides.ts`) plus live feeds fetched in the browser (`api/liveGuides.ts`: FantasyCalc dynasty or redraft rankings matched to your QB/PPR/size settings; FantasyFootballCalculator ADP for redraft), refreshable with one click. "Where your guides disagree" callouts; Sleeper draft-room sync (order, live picks, hide-drafted, on-the-clock); draft intel (`lib/draftIntel.ts`): market-vs-consensus divergence column + "market steals" sort, survival odds ("Lasts %" to your next pick, need-weighted over the teams picking before you, traded picks honored — roster-based needs in rookie drafts, picks-so-far needs in startup/redraft), dead-QB-market detection for 1QB rookie drafts, and an on-the-clock alert card. **Mock draft** (`lib/mockDraft.ts`): CPU teams draft off your consensus board with the same need-weighted taste model (fill starters, bench to taste, K/DEF in the closing rounds, no third QB in 1QB), you pick when you're up (or auto-pick), sim to end, undo, seeded/reproducible, continues from the real Sleeper picks mid-draft, draft-grid + haul scorecard, and a 200-run batch that shows who usually falls to each of your picks plus a mock ADP |
 | **Dynasty** | Value-weighted core age vs league, contend/rebuild window call, draft-pick capital, young-core and sell-window lists |
 
 ## Architecture
@@ -43,6 +43,9 @@ src/
     marketValues.ts  real dynasty market values: FantasyCalc live sync (joins on
                      sleeperId, parameterized by superflex/PPR/size), KTC-style
                      paste import (name matching), demo market; IndexedDB cache
+    liveGuides.ts    live draft-guide feeds fetched from the browser and turned
+                     into consensus-board columns: FantasyCalc rankings (dynasty
+                     or redraft per draft mode), FantasyFootballCalculator ADP
   lib/
     scoring.ts       league scoring_settings × raw stat lines (custom scoring is exact)
     value.ts         dynasty value model: production vs replacement × age curve
@@ -50,6 +53,13 @@ src/
     market.ts        market↔heuristic blending on the 0-100 scale (players + picks)
     guides.ts        draft-guide parsing (forgiving: csv/tsv/ranked text/tiers) and
                      consensus aggregation with name matching + disagreement stats
+    draftMode.ts     rookie / startup / redraft detection (league type + draft shape),
+                     per-mode value yardstick, board positions, default rounds
+    draftIntel.ts    pick math w/ traded picks, market divergence, survival odds,
+                     roster-based and picks-based positional need models
+    mockDraft.ts     seeded mock-draft engine: need-weighted CPU picks, interactive
+                     or auto picks for you, undo, hauls, batch runs → mock ADP +
+                     "who falls to my pick" odds
     lineup.ts        lineup optimizer honoring league roster_positions (flex/superflex),
                      start/sit advice, availability handling (Out/IR = 0)
     roster.ts        roster management: IR hygiene, drop/add upgrade pairs,
@@ -65,10 +75,10 @@ src/
   demo/demoData.ts   deterministic seeded demo league (full 14-wk schedule, 5 played)
   AppContext.tsx     loads the full league bundle (parallel fetches incl. every week's
                      matchups), blends market values, memoized
-  views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Draft, Dynasty
+  views/             Setup, Overview, MyTeam, Matchup, Playoffs, Waivers, Trades, Draft (+ MockDraft), Dynasty
 ```
 
-Run `npm test` for the simulation/market/guides unit suite (38 tests, no network needed).
+Run `npm test` for the simulation/market/guides/draft unit suite (90 tests, no network needed).
 
 Design notes:
 
@@ -86,12 +96,15 @@ Design notes:
 - [x] Real dynasty market values (KeepTradeCut/FantasyCalc import) alongside the heuristic
 - [x] Multi-week schedule outlook + playoff odds simulation (Monte Carlo)
 - [x] Draft tab: guide aggregation into a consensus board + Sleeper draft-room sync
+- [x] Non-dynasty drafts (startup / redraft / keeper modes) + mock draft engine + default guide loading
 - [ ] **Live-draft auto-polling** — hands-free pick sync while a draft is in progress
       (poll `draft/<id>/picks` on an interval while status is `drafting`, pause when idle)
 - [ ] **On-the-clock pick recommendations** — when it's your pick, surface the top 3
       options, each with its reasons ("consensus #4, falls 6 spots past ADP, fills your
       thinnest position, market agrees at 5,2k") from consensus rank + guide disagreement
       + roster needs + market/heuristic value
+- [ ] Fresh redraft boards bundled offline (FantasyPros redraft ECR / ADP snapshots) — today redraft
+      relies on the live FantasyCalc + FFCalculator feeds, which need the browser to reach them
 - [ ] Waiver FAAB bid optimizer using league bid history
 - [ ] Trade finder for 2-for-1 / pick-included packages
 - [ ] News feed / injury push alerts
