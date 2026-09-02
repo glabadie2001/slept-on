@@ -4,14 +4,15 @@ import type { PlayerMap } from "../types";
 
 /**
  * Sample draft guides for the demo league: three fictional analysts ranking
- * the same young-player pool with seeded disagreement, plus a couple of names
- * no analyst can agree exist (to demo unmatched-row handling).
+ * the incoming rookie class (unrostered, no NFL team yet) with seeded
+ * disagreement, and a couple of names no analyst can agree exist (to demo
+ * unmatched-row handling). Deep enough to mock the full 4-round demo draft.
  */
 export function buildSampleGuides(players: PlayerMap): Guide[] {
   const pool = Object.values(players)
-    .filter((p) => (p.age ?? 99) <= 25 && p.position !== "K" && p.position !== "DEF")
+    .filter((p) => (p.years_exp ?? 99) === 0 && !p.team && p.position !== "K" && p.position !== "DEF")
     .sort((a, b) => (a.search_rank ?? 1e9) - (b.search_rank ?? 1e9))
-    .slice(0, 36);
+    .slice(0, 52);
 
   const sources = [
     { name: "The Dynasty Ledger — Rookie & Sophomore Guide", seed: 11, jitter: 4, drops: 3 },
@@ -36,6 +37,7 @@ export function buildSampleGuides(players: PlayerMap): Guide[] {
       name: src.name,
       addedAt: Date.now() - gi,
       entries: ranked,
+      source: "sample" as const,
     };
   });
 

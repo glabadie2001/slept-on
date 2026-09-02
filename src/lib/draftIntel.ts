@@ -1,4 +1,5 @@
 import { positionalNeeds } from "./analysis";
+import { SLOT_ELIGIBILITY, startingSlots } from "./lineup";
 import { isSuperflex } from "./value";
 import type { ConsensusRow } from "./guides";
 import type { BlendedValue } from "./market";
@@ -16,6 +17,8 @@ import type {
  *  - pick ownership honoring traded picks → who picks between you and your next turn
  *  - survival odds: P(player lasts to your next pick), need-weighted
  *  - QB market context: in a 1QB league where every team is set, QBs have no buyer
+ *  - pick-based needs for startup/redraft drafts, where rosters are empty and
+ *    appetite is "what has this team drafted so far vs the lineup it must fill"
  *
  * All transparent heuristics over data already in the LeagueBundle — same
  * philosophy as lib/value.ts: explainable, not a black box.
@@ -195,9 +198,9 @@ export function needMultipliers(
 // ---------- survival odds ----------
 
 /** how many of the top available players a drafter realistically considers */
-const CONSIDERATION_SET = 10;
+export const CONSIDERATION_SET = 10;
 /** appetite decay down the board: weight ∝ exp(−index / TASTE_DECAY) */
-const TASTE_DECAY = 3;
+export const TASTE_DECAY = 3;
 
 /**
  * P(row still available at your next pick). Each intervening team picks from
@@ -228,6 +231,121 @@ export function survivalOdds(
       const pTaken = weights[i] / total;
       out.set(row.key, (out.get(row.key) ?? 1) * (1 - pTaken));
     });
+  }
+  return out;
+}
+
+// ---------- pick-based need multipliers (startup / redraft) ----------
+
+const BOARD_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DEF"];
+
+/** how flex slots spread demand across positions */
+const FLEX_SHARE: Record<string, Record<string, number>> = {
+  FLEX: { RB: 0.45, WR: 0.45, TE: 0.1 },
+  WRRB_FLEX: { RB: 0.5, WR: 0.5 },
+  REC_FLEX: { WR: 0.7, TE: 0.3 },
+  SUPER_FLEX: { QB: 0.6, RB: 0.15, WR: 0.2, TE: 0.05 },
+};
+
+export interface PositionTargets {
+  /** dedicated starting slots per position (integers) */
+  strict: Record<string, number>;
+  /** dedicated slots + this position's share of flex slots */
+  starters: Record<string, number>;
+  /** starters + a bench allowance — the roster a sane drafter ends up with */
+  targets: Record<string, number>;
+  startingSlots: number;
+}
+
+export function positionTargets(league: SleeperLeague, rounds: number): PositionTargets {
+  const strict: Record<string, number> = {};
+  const starters: Record<string, number> = {};
+  const slots = startingSlots(league);
+  for (const slot of slots) {
+    const elig = SLOT_ELIGIBILITY[slot];
+    if (elig.length === 1) {
+      strict[elig[0]] = (strict[elig[0]] ?? 0) + 1;
+      starters[elig[0]] = (starters[elig[0]] ?? 0) + 1;
+    } else {
+      for (const [pos, share] of Object.entries(FLEX_SHARE[slot] ?? {})) {
+        starters[pos] = (starters[pos] ?? 0) + share;
+      }
+    }
+  }
+  const bench = Math.max(0, rounds - slots.length);
+  const sf = isSuperflex(league);
+  const benchShare: Record<string, number> = { QB: sf ? 0.16 : 0.08, RB: 0.38, WR: 0.38, TE: 0.08, K: 0, DEF: 0 };
+  const targets: Record<string, number> = {};
+  for (const pos of BOARD_POSITIONS) {
+    targets[pos] = (starters[pos] ?? 0) + bench * (benchShare[pos] ?? 0);
+  }
+  return { strict, starters, targets, startingSlots: slots.length };
+}
+
+/**
+ * Per-roster appetite by position from what each team has drafted so far.
+ * Same 0.x–2.x scale as needMultipliers so survivalOdds/mocks can use either:
+ *   missing a dedicated starter → hungry, more so as the draft gets late
+ *   flex share / bench allowance unfilled → neutral-ish
+ *   position full → cold (a 4th RB in a 1QB league is a luxury)
+ *   K/DEF → ignored until the closing rounds, then mandatory (≥ 2 = a
+ *   "must fill" the mock engine will reach for)
+ *   backup QB in 1QB → only worth a look past the midpoint
+ */
+export function pickNeedMultipliers(
+  league: SleeperLeague,
+  rounds: number,
+  round: number,
+  draftedPositions: Map<number, string[]>,
+  rosterIds: number[],
+): Map<number, Record<string, number>> {
+  const t = positionTargets(league, rounds);
+  const sf = isSuperflex(league);
+  const progress = rounds > 0 ? Math.min(1, Math.max(0, (round - 1) / rounds)) : 0;
+  const remaining = Math.max(1, rounds - round + 1);
+  const out = new Map<number, Record<string, number>>();
+
+  for (const rid of rosterIds) {
+    const have: Record<string, number> = {};
+    for (const pos of draftedPositions.get(rid) ?? []) have[pos] = (have[pos] ?? 0) + 1;
+    const unfilledKD = Math.max(0, (t.strict.K ?? 0) - (have.K ?? 0)) + Math.max(0, (t.strict.DEF ?? 0) - (have.DEF ?? 0));
+    const mult: Record<string, number> = {};
+    for (const pos of BOARD_POSITIONS) {
+      const n = have[pos] ?? 0;
+      const strict = t.strict[pos] ?? 0;
+      if (pos === "K" || pos === "DEF") {
+        if (strict === 0 || n >= strict) mult[pos] = 0.02;
+        else if (remaining <= unfilledKD) mult[pos] = 50; // out of rounds: must
+        else if (remaining === unfilledKD + 1) mult[pos] = 4; // one round of slack: should
+        else mult[pos] = progress > 0.75 ? 0.6 : 0.05;
+        continue;
+      }
+      let m: number;
+      if (n < strict) m = 1.4 + progress * 1.2;
+      else if (n < Math.ceil(t.starters[pos] ?? 0)) m = 1.1;
+      else if (n < (t.targets[pos] ?? 0)) m = 0.85;
+      else m = 0.3;
+      if (pos === "QB" && !sf && n >= 1) m = n >= 2 ? 0.01 : progress < 0.55 ? 0.15 : 0.5;
+      if (pos === "QB" && sf && n >= 2) m = n >= 3 ? 0.05 : 0.45;
+      if (pos === "TE" && n >= 1 && m > 0.4) m = n >= 2 ? 0.05 : 0.35;
+      mult[pos] = m;
+    }
+    out.set(rid, mult);
+  }
+  return out;
+}
+
+/** positions drafted so far per roster, from live Sleeper picks */
+export function draftedPositionsFromPicks(
+  picks: { roster_id: number | null; player_id: string; metadata?: { position?: string } | null }[],
+  players: PlayerMap,
+): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const p of picks) {
+    if (p.roster_id == null) continue;
+    const pos = players[p.player_id]?.position ?? p.metadata?.position;
+    if (!pos) continue;
+    (out.get(p.roster_id) ?? out.set(p.roster_id, []).get(p.roster_id)!).push(pos);
   }
   return out;
 }
