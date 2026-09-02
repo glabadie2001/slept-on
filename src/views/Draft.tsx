@@ -32,7 +32,7 @@ import {
   saveModeOverride,
 } from "../lib/draftMode";
 import type { DraftMode } from "../lib/draftMode";
-import type { MockPick } from "../lib/mockDraft";
+import type { MockAdp, MockPick } from "../lib/mockDraft";
 import { isSuperflex } from "../lib/value";
 import { log } from "../lib/log";
 import {
@@ -334,9 +334,10 @@ export function Draft() {
   }, [bundle.rosters]);
 
   const [posFilter, setPosFilter] = useState("ALL");
+  const [mockAdp, setMockAdp] = useState<Map<string, MockAdp> | null>(null);
   const [hideDrafted, setHideDrafted] = useState(true);
   const [hideRostered, setHideRostered] = useState(false);
-  const [sortBy, setSortBy] = useState<"consensus" | "divisive" | "steals" | "value">("consensus");
+  const [sortBy, setSortBy] = useState<"consensus" | "divisive" | "steals" | "value" | "adp">("consensus");
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
 
@@ -467,9 +468,12 @@ export function Draft() {
       rows = [...rows].sort((a, b) => div(b) - div(a) || a.avg - b.avg);
     } else if (sortBy === "value") {
       rows = [...rows].sort((a, b) => (rowValue(b) ?? -1) - (rowValue(a) ?? -1) || a.avg - b.avg);
+    } else if (sortBy === "adp" && mockAdp) {
+      const adp = (r: ConsensusRow) => mockAdp.get(r.key)?.avg ?? 1e9;
+      rows = [...rows].sort((a, b) => adp(a) - adp(b) || a.avg - b.avg);
     }
     return rows;
-  }, [board, posFilter, hideDrafted, hideRostered, mode, sortBy, search, picks.length, isDrafted, rosteredIds, divergence, rowValue]);
+  }, [board, posFilter, hideDrafted, hideRostered, mode, sortBy, search, picks.length, isDrafted, rosteredIds, divergence, rowValue, mockAdp]);
 
   const visible = showAll ? filtered : filtered.slice(0, 60);
 
@@ -482,12 +486,14 @@ export function Draft() {
     [board],
   );
 
-  const cycleSort = () =>
-    setSortBy(
-      sortBy === "consensus" ? "divisive" : sortBy === "divisive" ? "steals" : sortBy === "steals" ? "value" : "consensus",
-    );
+  const cycleSort = () => {
+    const order: (typeof sortBy)[] = mockAdp
+      ? ["consensus", "divisive", "steals", "value", "adp"]
+      : ["consensus", "divisive", "steals", "value"];
+    setSortBy(order[(order.indexOf(sortBy) + 1) % order.length]);
+  };
   const sortLabel =
-    sortBy === "divisive" ? "most divisive" : sortBy === "steals" ? "market steals" : sortBy === "value" ? MODE_VALUE_LABEL[mode].toLowerCase() : "consensus";
+    sortBy === "divisive" ? "most divisive" : sortBy === "steals" ? "market steals" : sortBy === "value" ? MODE_VALUE_LABEL[mode].toLowerCase() : sortBy === "adp" ? "mock ADP" : "consensus";
 
   const valueLabel = MODE_VALUE_LABEL[mode];
 
@@ -775,6 +781,11 @@ export function Draft() {
                       Lasts
                     </th>
                   )}
+                  {mockAdp && (
+                    <th className="right" title="Average overall pick across the last batch of mock drafts, with the pick range. Δ = mock ADP − consensus rank: positive means he falls past his rank, negative means the CPU reaches for him.">
+                      Mock ADP
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -829,6 +840,19 @@ export function Draft() {
                           {drafted ? "—" : survival.has(r.key) ? `${Math.round(survival.get(r.key)! * 100)}%` : "—"}
                         </td>
                       )}
+                      {mockAdp && (() => {
+                        const a = mockAdp.get(r.key);
+                        if (!a) return <td className="right num muted">—</td>;
+                        const delta = Math.round(a.avg - r.consensus);
+                        return (
+                          <td className="right num" title={`range ${a.min}–${a.max} across ${a.n} timelines`}>
+                            {a.avg}{" "}
+                            <span className={`small${delta >= 4 ? " delta-up" : delta <= -4 ? " delta-down" : " muted"}`}>
+                              {delta > 0 ? `+${delta}` : delta}
+                            </span>
+                          </td>
+                        );
+                      })()}
                     </tr>
                   );
                 })}
@@ -850,6 +874,7 @@ export function Draft() {
         sleeperDraft={draft}
         needBase={rookieNeeds}
         positions={positions}
+        onAdp={setMockAdp}
       />
 
       <div className="card">

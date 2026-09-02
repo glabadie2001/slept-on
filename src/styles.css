@@ -498,6 +498,29 @@ tr.drafted-row .player-name { text-decoration: line-through; }
 .pick-row button:hover { filter: brightness(1.1); }
 .fall-table td.names { white-space: normal; }
 
+/* batch read-outs */
+.heat { font-size: 12px; }
+.heat th.center, .heat td.center { text-align: center; }
+.heat td.heat-cell { min-width: 44px; font-weight: 600; border-left: 2px solid var(--surface); }
+.heat-legend { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.heat-legend .swatch { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.target-list { display: flex; gap: 6px 14px; flex-wrap: wrap; }
+.target { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12.5px; min-width: 120px; }
+.target-bar { display: block; height: 3px; background: var(--grid); border-radius: 2px; overflow: hidden; }
+.target-bar > span { display: block; height: 100%; background: var(--s1-blue); border-radius: 2px; }
+.tl-roster h3 { margin-bottom: 6px; }
+.lineup-mini { width: 100%; font-size: 12.5px; }
+.lineup-mini td { padding: 3px 6px; }
+.lineup-mini td.slot { width: 44px; }
+.lineup-mini tr.muted td { color: var(--muted); }
+.tl-table td, .tl-table th { vertical-align: middle; }
+.range-row { display: flex; align-items: center; gap: 8px; min-width: 260px; }
+.range-bar { position: relative; flex: 1; height: 8px; background: var(--grid); border-radius: 4px; }
+.range-fill { position: absolute; top: 0; bottom: 0; background: var(--s1-blue); opacity: 0.55; border-radius: 4px; }
+.range-mid { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--ink); border-radius: 1px; transform: translateX(-1px); }
+button.linklike.small { background: none; border: none; color: var(--s1-blue); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+button.linklike.small:hover { text-decoration: underline; }
+
 /* ---- value model panel ---- */
 .values-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
 .values-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
