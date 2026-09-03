@@ -35,6 +35,8 @@ import {
   upcomingPicks,
 } from "../lib/draftIntel";
 import type { QbContext } from "../lib/draftIntel";
+import { reviewDraft } from "../lib/draftReview";
+import { optimizeLineup } from "../lib/lineup";
 import {
   DRAFT_MODES,
   DRAFT_MODE_BLURB,
@@ -91,7 +93,7 @@ function saveJson(key: string, value: unknown): void {
 const SOURCE_ICON: Record<string, string> = { bundled: "⚡", live: "📡", sample: "🧪" };
 
 export function Draft() {
-  const { bundle, teams, myTeam, values } = useAppData();
+  const { bundle, teams, myTeam, values, projPts } = useAppData();
   const leagueId = bundle.league.league_id;
   const byRoster = new Map(teams.map((t) => [t.rosterId, t]));
 
@@ -580,6 +582,16 @@ export function Draft() {
         : [],
     [availableRows, survival],
   );
+  // ---- review of the real draft so far ----
+  const review = useMemo(() => {
+    if (!draft || picks.length === 0) return null;
+    const scoreRoster =
+      mode === "rookie"
+        ? (ids: string[]) => Math.round(ids.reduce((s, id) => s + (values[id]?.value ?? 0), 0))
+        : (ids: string[]) => Math.round(optimizeLineup(bundle.league, ids, bundle.players, projPts).totalProjected);
+    return reviewDraft(picks, board, bundle.players, bundle.rosters.map((r) => r.roster_id), scoreRoster);
+  }, [draft, picks, board, bundle, mode, values, projPts]);
+  const teamNameOf = useCallback((rid: number | null) => teams.find((t) => t.rosterId === rid)?.teamName ?? `Roster ${rid}`, [teams]);
   const recommended = useMemo(
     () =>
       myTeam && draft && draft.status !== "complete" && availableRows.length
@@ -789,6 +801,112 @@ export function Draft() {
               </li>
             )}
           </ul>
+        </div>
+      )}
+
+      {review && (
+        <div className="card section">
+          <h2>{draft?.status === "complete" ? "📋 Draft review" : `📋 Draft so far — ${picks.length} picks`}</h2>
+          <p className="muted small">
+            Every pick against your consensus board: Δ = pick number − consensus rank, so +12 means he fell twelve
+            spots to that team and −12 means a reach. Teams are ranked by{" "}
+            {mode === "rookie" ? "summed dynasty value of their picks" : "projected starting-lineup points from what they've drafted"}
+            {review.coverage < 0.9 && ` · ${Math.round(review.coverage * 100)}% of picks are on your board`}.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Team</th>
+                  <th className="right">Picks</th>
+                  <th className="right" title={mode === "rookie" ? "summed dynasty value" : "projected points from the best lineup of drafted players"}>
+                    {mode === "rookie" ? "Value" : "Proj"}
+                  </th>
+                  <th className="right" title="mean Δ over ranked, non-keeper picks">Avg Δ</th>
+                  <th>Mix</th>
+                  <th>Best value</th>
+                  <th>Biggest reach</th>
+                </tr>
+              </thead>
+              <tbody>
+                {review.teams.map((t, i) => (
+                  <tr key={t.rosterId} style={t.rosterId === myTeam?.rosterId ? { fontWeight: 600 } : undefined}>
+                    <td>{i + 1}</td>
+                    <td>{teamNameOf(t.rosterId)}{t.rosterId === myTeam?.rosterId ? " (you)" : ""}</td>
+                    <td className="right">{t.picks.length}</td>
+                    <td className="right">{t.strength}</td>
+                    <td className="right">{t.avgDelta == null ? "—" : `${t.avgDelta > 0 ? "+" : ""}${t.avgDelta.toFixed(1)}`}</td>
+                    <td className="muted small">
+                      {Object.entries(t.posMix).sort((a, b) => b[1] - a[1]).map(([pos, n]) => `${n} ${pos}`).join(" · ")}
+                    </td>
+                    <td className="small">{t.bestValue ? `${t.bestValue.name} (+${t.bestValue.delta})` : "—"}</td>
+                    <td className="small">{t.biggestReach ? `${t.biggestReach.name} (${t.biggestReach.delta})` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {(() => {
+            const me = review.teams.find((t) => t.rosterId === myTeam?.rosterId);
+            return me && me.picks.length > 0 ? (
+              <>
+                <h3>Your picks</h3>
+                <ul className="advice-list">
+                  {me.picks.map((p) => (
+                    <li key={p.pickNo}>
+                      <span className="icon num muted">R{p.round}.{String(p.slot).padStart(2, "0")}</span>
+                      <span>
+                        <strong>{p.name}</strong> {p.position && <PosChip pos={p.position} />}{" "}
+                        <span className="muted small">
+                          pick {p.pickNo}
+                          {p.consensus != null ? ` · consensus #${p.consensus} · ` : " · not on your board"}
+                          {p.delta != null && (
+                            <span className={p.delta >= 0 ? "delta-up" : "delta-down"}>
+                              {p.delta > 0 ? `+${p.delta} fell to you` : p.delta < 0 ? `${p.delta} reach` : "on the number"}
+                            </span>
+                          )}
+                          {p.keeper && " · keeper"}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null;
+          })()}
+          {(review.bestValues.length > 0 || review.biggestReaches.length > 0) && (
+            <div className="grid cols-2">
+              <div>
+                <h3>Best values league-wide</h3>
+                <ul className="advice-list">
+                  {review.bestValues.map((p) => (
+                    <li key={p.pickNo}>
+                      <span className="icon">💎</span>
+                      <span>
+                        <strong>{p.name}</strong> {p.position && <PosChip pos={p.position} />}{" "}
+                        <span className="muted small">+{p.delta} · pick {p.pickNo} vs #{p.consensus} · {teamNameOf(p.rosterId)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Biggest reaches</h3>
+                <ul className="advice-list">
+                  {review.biggestReaches.map((p) => (
+                    <li key={p.pickNo}>
+                      <span className="icon">🙈</span>
+                      <span>
+                        <strong>{p.name}</strong> {p.position && <PosChip pos={p.position} />}{" "}
+                        <span className="muted small">{p.delta} · pick {p.pickNo} vs #{p.consensus} · {teamNameOf(p.rosterId)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
