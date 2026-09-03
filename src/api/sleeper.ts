@@ -48,15 +48,15 @@ export const sleeper = {
   getTransactions: (leagueId: string, round: number) =>
     fetchJson<SleeperTransaction[]>(`${V1}/league/${leagueId}/transactions/${round}`),
 
-  /** newest first */
-  getLeagueDrafts: (leagueId: string) =>
-    fetchJson<SleeperDraft[]>(`${V1}/league/${leagueId}/drafts`),
+  /** newest first. `fresh` skips Cloudflare's 5-minute cache (live draft syncs). */
+  getLeagueDrafts: (leagueId: string, fresh = false) =>
+    fetchJson<SleeperDraft[]>(`${V1}/league/${leagueId}/drafts`, { fresh }),
 
-  getDraft: (draftId: string) => fetchJson<SleeperDraft>(`${V1}/draft/${draftId}`),
+  getDraft: (draftId: string, fresh = false) => fetchJson<SleeperDraft>(`${V1}/draft/${draftId}`, { fresh }),
 
-  /** picks made so far, in pick order */
-  getDraftPicks: (draftId: string) =>
-    fetchJson<SleeperDraftPick[]>(`${V1}/draft/${draftId}/picks`),
+  /** picks made so far, in pick order. `fresh` skips Cloudflare's 5-minute cache. */
+  getDraftPicks: (draftId: string, fresh = false) =>
+    fetchJson<SleeperDraftPick[]>(`${V1}/draft/${draftId}/picks`, { fresh }),
 
   getTrending: (type: "add" | "drop", lookbackHours = 48, limit = 50) =>
     fetchJson<TrendingPlayer[]>(

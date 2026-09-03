@@ -11,17 +11,23 @@ export class HttpError extends Error {
   }
 }
 
-/** fetch JSON with timeout + retry/backoff. 404 returns null (Sleeper uses it for "not found"). */
+/**
+ * fetch JSON with timeout + retry/backoff. 404 returns null (Sleeper uses it for "not found").
+ * `fresh` bypasses every cache between us and the origin: Sleeper serves through
+ * Cloudflare with `s-maxage=300`, so a live draft's picks come back stale for up
+ * to five minutes unless the URL is unique per request.
+ */
 export async function fetchJson<T>(
   url: string,
-  { retries = 2, timeoutMs = DEFAULT_TIMEOUT_MS }: { retries?: number; timeoutMs?: number } = {},
+  { retries = 2, timeoutMs = DEFAULT_TIMEOUT_MS, fresh = false }: { retries?: number; timeoutMs?: number; fresh?: boolean } = {},
 ): Promise<T | null> {
+  if (fresh) url += `${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
+      const res = await fetch(url, { signal: ctrl.signal, cache: fresh ? "no-store" : "default" });
       if (res.status === 404) return null;
       if (!res.ok) throw new HttpError(res.status, url);
       return (await res.json()) as T;
