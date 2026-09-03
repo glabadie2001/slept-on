@@ -364,22 +364,64 @@ export interface Recommendation {
   survival: number | null;
   /** best available at the same position who probably lasts to my next pick, if the pick can wait */
   fallback: ConsensusRow | null;
+  /** his bye week, when known */
+  bye: number | null;
+  /** my already-drafted players who share that bye and compete for the same lineup slots */
+  byeClashes: string[];
+}
+
+export interface MyDrafted {
+  name: string;
+  position: string | null;
+  bye: number | null;
+}
+
+const FLEX_GROUP = new Set(["RB", "WR", "TE"]);
+/** score multiplier per same-position bye clash / per flex-group clash */
+const BYE_SAME = 0.86;
+const BYE_FLEX = 0.96;
+
+export interface ByeContext {
+  /** bye week of a board row (null = unknown) */
+  of: (row: ConsensusRow) => number | null;
+  /** what I have drafted so far */
+  mine: MyDrafted[];
+}
+
+/** bye-stacking penalty for adding `row` to what I already have: [multiplier, clashing names] */
+export function byePenalty(row: ConsensusRow, bye: number | null, mine: MyDrafted[]): [number, string[]] {
+  if (bye == null || !row.position) return [1, []];
+  let mult = 1;
+  const names: string[] = [];
+  for (const m of mine) {
+    if (m.bye !== bye || !m.position) continue;
+    if (m.position === row.position) {
+      mult *= BYE_SAME;
+      names.push(m.name);
+    } else if (FLEX_GROUP.has(m.position) && FLEX_GROUP.has(row.position)) {
+      mult *= BYE_FLEX;
+      names.push(m.name);
+    }
+  }
+  return [Math.max(0.6, mult), names];
 }
 
 /** consensus rank → worth on a 0-100 curve (steep at the top, long flat tail) */
 export const rankWorth = (consensus: number): number => 100 * Math.exp(-(consensus - 1) / 45);
 
 /**
- * What to take now. Worth from consensus rank, bent by my positional need and
- * by urgency: a player who will still be there at my next pick can wait, so his
+ * What to take now. Worth from consensus rank, bent by my positional need, by
+ * urgency — a player who will still be there at my next pick can wait, so his
  * "take now" score is discounted toward the value of the best same-position
- * player who is likely to last. Scores are relative (top = 100).
+ * player who is likely to last — and by bye stacking with what I've already
+ * drafted (same position hurts, a shared flex pool hurts a little).
+ * Scores are relative (top = 100).
  */
 export function recommendPicks(
   available: ConsensusRow[],
   myNeed: Record<string, number>,
   survival: Map<string, number> | null,
-  { limit = 5, pool = 40, lastsThreshold = 0.6 } = {},
+  { limit = 5, pool = 40, lastsThreshold = 0.6, byes = null as ByeContext | null } = {},
 ): Recommendation[] {
   const cands = available.slice(0, pool);
   const lastsByPos = new Map<string, ConsensusRow>();
@@ -403,7 +445,9 @@ export function recommendPicks(
       // he IS the fallback: he can wait, unless nothing else is worth taking
       takeNow = worth * (1 - p * 0.35);
     }
-    return { row, score: takeNow * need, worth, need, survival: p, fallback: fb && fb.key !== row.key ? fb : null };
+    const bye = byes ? byes.of(row) : null;
+    const [byeMult, byeClashes] = byes ? byePenalty(row, bye, byes.mine) : [1, []];
+    return { row, score: takeNow * need * byeMult, worth, need, survival: p, fallback: fb && fb.key !== row.key ? fb : null, bye, byeClashes };
   });
   recs.sort((a, b) => b.score - a.score);
   const top = recs[0]?.score || 1;
