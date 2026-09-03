@@ -30,6 +30,7 @@ import {
   pickNeedMultipliers,
   pickPosition,
   qbMarketContext,
+  recommendPicks,
   survivalOdds,
   upcomingPicks,
 } from "../lib/draftIntel";
@@ -242,6 +243,12 @@ export function Draft() {
   useEffect(() => {
     void loadDraft();
   }, [loadDraft]);
+  // Live draft: re-pull picks every 20s so the board, odds and recommendations track the room.
+  useEffect(() => {
+    if (bundle.demo || draft?.status !== "drafting") return;
+    const t = setInterval(() => void loadDraft(), 20_000);
+    return () => clearInterval(t);
+  }, [bundle.demo, draft?.status, loadDraft]);
 
   // ---- draft mode (rookie / startup / redraft) ----
   const detectedMode = useMemo(
@@ -573,6 +580,13 @@ export function Draft() {
         : [],
     [availableRows, survival],
   );
+  const recommended = useMemo(
+    () =>
+      myTeam && draft && draft.status !== "complete" && availableRows.length
+        ? recommendPicks(availableRows, needs.get(myTeam.rosterId) ?? {}, survival)
+        : [],
+    [availableRows, needs, survival, myTeam, draft],
+  );
 
   // Real picks → mock-draft picks so the mock can continue a live draft.
   const realMockPicks = useMemo<MockPick[]>(
@@ -689,6 +703,37 @@ export function Draft() {
         </div>
         <span className="muted small">{DRAFT_MODE_BLURB[mode]}</span>
       </div>
+
+      {recommended.length > 0 && (
+        <div className="card section" style={myTurn ? { borderColor: "var(--delta-up)" } : undefined}>
+          <h2>
+            {myTurn ? "🎯 Recommended now — you're on the clock" : "🎯 Recommended now"}
+            {upcoming?.myNextPick != null && !myTurn && (
+              <span className="muted small"> · your next pick is #{upcoming.myNextPick}</span>
+            )}
+          </h2>
+          <ol className="advice-list">
+            {recommended.map((r, i) => (
+              <li key={r.row.key}>
+                <span className="icon num">{i + 1}</span>
+                <span>
+                  <strong>{r.row.displayName}</strong> {r.row.position && <PosChip pos={r.row.position} />}{" "}
+                  <span className="muted small">
+                    consensus #{r.row.consensus}
+                    {r.need !== 1 && ` · need ×${r.need.toFixed(1)}`}
+                    {r.survival != null && ` · ${Math.round(r.survival * 100)}% to last to your next pick`}
+                    {r.fallback && ` · if he's gone, ${r.fallback.displayName} (#${r.fallback.consensus}) likely lasts`}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="muted small" style={{ marginBottom: 0 }}>
+            Worth from consensus rank, bent by your positional need and by whether he'd still be there next time you
+            pick — a player who will last can wait. {draft?.status === "drafting" ? "Picks re-sync every 20s." : ""}
+          </p>
+        </div>
+      )}
 
       {liveDrafting && upcoming && (myTurn || wontLast.length > 0 || marketSteal) && (
         <div className="card section" style={myTurn ? { borderColor: "var(--delta-up)" } : undefined}>

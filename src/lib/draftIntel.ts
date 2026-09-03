@@ -349,3 +349,63 @@ export function draftedPositionsFromPicks(
   }
   return out;
 }
+
+// ---------- recommended picks ----------
+
+export interface Recommendation {
+  row: ConsensusRow;
+  /** 0-100 composite */
+  score: number;
+  /** rank-derived worth, 0-100 */
+  worth: number;
+  /** my positional appetite (1 = neutral) */
+  need: number;
+  /** P(still there at my next pick), null when I have no pick left */
+  survival: number | null;
+  /** best available at the same position who probably lasts to my next pick, if the pick can wait */
+  fallback: ConsensusRow | null;
+}
+
+/** consensus rank → worth on a 0-100 curve (steep at the top, long flat tail) */
+export const rankWorth = (consensus: number): number => 100 * Math.exp(-(consensus - 1) / 45);
+
+/**
+ * What to take now. Worth from consensus rank, bent by my positional need and
+ * by urgency: a player who will still be there at my next pick can wait, so his
+ * "take now" score is discounted toward the value of the best same-position
+ * player who is likely to last. Scores are relative (top = 100).
+ */
+export function recommendPicks(
+  available: ConsensusRow[],
+  myNeed: Record<string, number>,
+  survival: Map<string, number> | null,
+  { limit = 5, pool = 40, lastsThreshold = 0.6 } = {},
+): Recommendation[] {
+  const cands = available.slice(0, pool);
+  const lastsByPos = new Map<string, ConsensusRow>();
+  if (survival) {
+    for (const r of cands) {
+      if (!r.position || lastsByPos.has(r.position)) continue;
+      if ((survival.get(r.key) ?? 1) >= lastsThreshold) lastsByPos.set(r.position, r);
+    }
+  }
+  const recs: Recommendation[] = cands.map((row) => {
+    const worth = rankWorth(row.consensus);
+    const need = row.position ? (myNeed[row.position] ?? 1) : 1;
+    const p = survival ? (survival.get(row.key) ?? 1) : null;
+    const fb = row.position ? (lastsByPos.get(row.position) ?? null) : null;
+    // if he lasts, taking him now only beats waiting by what I'd lose vs the fallback
+    let takeNow = worth;
+    if (p != null && fb && fb.key !== row.key) {
+      const fbWorth = rankWorth(fb.consensus);
+      takeNow = worth * (1 - p) + p * Math.max(fbWorth, worth * 0.5);
+    } else if (p != null && fb && fb.key === row.key) {
+      // he IS the fallback: he can wait, unless nothing else is worth taking
+      takeNow = worth * (1 - p * 0.35);
+    }
+    return { row, score: takeNow * need, worth, need, survival: p, fallback: fb && fb.key !== row.key ? fb : null };
+  });
+  recs.sort((a, b) => b.score - a.score);
+  const top = recs[0]?.score || 1;
+  return recs.slice(0, limit).map((r) => ({ ...r, score: Math.round((r.score / top) * 100) }));
+}
