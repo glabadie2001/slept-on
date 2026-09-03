@@ -37,6 +37,7 @@ import {
 import type { QbContext } from "../lib/draftIntel";
 import { reviewDraft } from "../lib/draftReview";
 import { byeWeekOf } from "../data/byes";
+import { buildLlmExport } from "../lib/llmExport";
 import { optimizeLineup } from "../lib/lineup";
 import {
   DRAFT_MODES,
@@ -627,6 +628,36 @@ export function Draft() {
         : [],
     [recCandidates, needs, survival, myTeam, draft, byeCtx],
   );
+  // ---- export the draft results for an LLM ----
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+  const exportForLlm = async () => {
+    if (!review) return;
+    const text = buildLlmExport({
+      league: bundle.league,
+      draft,
+      mode,
+      myRosterId: myTeam?.rosterId ?? null,
+      totalPicks,
+      review,
+      teamName: teamNameOf,
+      byeOf: (id) => byeWeekOf(bundle.players[id]?.team),
+      guideNames: guides.map((g) => g.name),
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyNote(`Copied ${Math.round(text.length / 1000)}k characters — paste into your LLM.`);
+    } catch {
+      // clipboard blocked: fall back to a download
+      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `draft-results-${bundle.league.season}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setCopyNote("Clipboard blocked — downloaded draft-results.md instead.");
+    }
+    setTimeout(() => setCopyNote(null), 6000);
+  };
   const rejectedStillAvailable = useMemo(() => {
     const rej = new Set(rejected);
     return availableRows.filter((r) => rej.has(r.key));
@@ -870,7 +901,18 @@ export function Draft() {
 
       {review && (
         <div className="card section">
-          <h2>{draft?.status === "complete" ? "📋 Draft review" : `📋 Draft so far — ${picks.length} picks`}</h2>
+          <div className="pill-row" style={{ alignItems: "center", marginBottom: 0 }}>
+            <h2 style={{ margin: 0 }}>{draft?.status === "complete" ? "📋 Draft review" : `📋 Draft so far — ${picks.length} picks`}</h2>
+            <button
+              className="ghost"
+              onClick={() => void exportForLlm()}
+              title="Copy the draft results as markdown — league format, every roster with pick / consensus / Δ / bye, the strength ranking, and the pick-by-pick list — to paste into ChatGPT, Claude, etc."
+              style={{ marginLeft: "auto" }}
+            >
+              🤖 Copy results for LLM
+            </button>
+          </div>
+          {copyNote && <p className="muted small">{copyNote}</p>}
           <p className="muted small">
             Every pick against your consensus board: Δ = pick number − consensus rank, so +12 means he fell twelve
             spots to that team and −12 means a reach. Teams are ranked by{" "}
