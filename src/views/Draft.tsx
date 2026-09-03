@@ -36,6 +36,7 @@ import {
 } from "../lib/draftIntel";
 import type { QbContext } from "../lib/draftIntel";
 import { reviewDraft } from "../lib/draftReview";
+import { byeWeekOf } from "../data/byes";
 import { optimizeLineup } from "../lib/lineup";
 import {
   DRAFT_MODES,
@@ -592,12 +593,23 @@ export function Draft() {
     return reviewDraft(picks, board, bundle.players, bundle.rosters.map((r) => r.roster_id), scoreRoster);
   }, [draft, picks, board, bundle, mode, values, projPts]);
   const teamNameOf = useCallback((rid: number | null) => teams.find((t) => t.rosterId === rid)?.teamName ?? `Roster ${rid}`, [teams]);
+  // Bye stacking only matters when the draft builds the season roster.
+  const byeCtx = useMemo(() => {
+    if (mode === "rookie" || !myTeam) return null;
+    const mine = picks
+      .filter((p) => p.roster_id === myTeam.rosterId)
+      .map((p) => {
+        const pl = bundle.players[p.player_id];
+        return { name: pl?.last_name ?? pl?.full_name ?? p.player_id, position: pl?.position ?? p.metadata?.position ?? null, bye: byeWeekOf(pl?.team) };
+      });
+    return { of: (row: ConsensusRow) => (row.sleeperId ? byeWeekOf(bundle.players[row.sleeperId]?.team) : null), mine };
+  }, [mode, myTeam, picks, bundle.players]);
   const recommended = useMemo(
     () =>
       myTeam && draft && draft.status !== "complete" && availableRows.length
-        ? recommendPicks(availableRows, needs.get(myTeam.rosterId) ?? {}, survival)
+        ? recommendPicks(availableRows, needs.get(myTeam.rosterId) ?? {}, survival, { byes: byeCtx })
         : [],
-    [availableRows, needs, survival, myTeam, draft],
+    [availableRows, needs, survival, myTeam, draft, byeCtx],
   );
 
   // Real picks → mock-draft picks so the mock can continue a live draft.
@@ -735,14 +747,24 @@ export function Draft() {
                     {r.need !== 1 && ` · need ×${r.need.toFixed(1)}`}
                     {r.survival != null && ` · ${Math.round(r.survival * 100)}% to last to your next pick`}
                     {r.fallback && ` · if he's gone, ${r.fallback.displayName} (#${r.fallback.consensus}) likely lasts`}
+                    {r.bye != null && (
+                      <>
+                        {" · bye "}
+                        {r.byeClashes.length > 0 ? (
+                          <span className="delta-down">{r.bye} stacks with {r.byeClashes.join(", ")}</span>
+                        ) : (
+                          `${r.bye}`
+                        )}
+                      </>
+                    )}
                   </span>
                 </span>
               </li>
             ))}
           </ol>
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Worth from consensus rank, bent by your positional need and by whether he'd still be there next time you
-            pick — a player who will last can wait. {draft?.status === "drafting" ? "Picks re-sync every 20s." : ""}
+            Worth from consensus rank, bent by your positional need, by whether he'd still be there next time you
+            pick — a player who will last can wait — and by bye weeks stacking with players you've already taken. {draft?.status === "drafting" ? "Picks re-sync every 20s." : ""}
           </p>
         </div>
       )}

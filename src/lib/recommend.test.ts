@@ -29,6 +29,15 @@ describe("recommendPicks", () => {
     const a = recommendPicks(board, {}, surv).find((r) => r.row.displayName === "A")!;
     expect(a.fallback?.displayName).toBe("C");
   });
+  it("penalises a bye stacked with a same-position player I already have", () => {
+    const twins = [row("X", 5, "RB"), row("Y", 5, "RB")];
+    const byes = { of: (r: ConsensusRow) => (r.displayName === "X" ? 6 : 10), mine: [{ name: "Gibbs", position: "RB", bye: 6 }] };
+    const recs = recommendPicks(twins, {}, null, { byes });
+    expect(recs[0].row.displayName).toBe("Y");
+    const x = recs.find((r) => r.row.displayName === "X")!;
+    expect(x.byeClashes).toEqual(["Gibbs"]);
+    expect(x.bye).toBe(6);
+  });
   it("works without survival odds", () => {
     expect(recommendPicks(board, {}, null)[0].score).toBe(100);
   });
