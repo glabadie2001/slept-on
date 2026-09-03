@@ -224,11 +224,11 @@ export function Draft() {
     setDraftLoading(true);
     setDraftError(null);
     try {
-      const drafts = await sleeper.getLeagueDrafts(leagueId);
+      const drafts = await sleeper.getLeagueDrafts(leagueId, true);
       const latest = drafts?.[0] ?? null;
       setDraft(latest);
       if (latest) {
-        const p = await sleeper.getDraftPicks(latest.draft_id);
+        const p = await sleeper.getDraftPicks(latest.draft_id, true);
         setPicks(p ?? []);
       }
     } catch (err) {
