@@ -73,6 +73,7 @@ function guidesKey(leagueId: string): string {
 const autoloadKey = (leagueId: string) => `draft_guides_autoloaded:${leagueId}`;
 const weightsKey = (leagueId: string) => `draft_guide_weights:${leagueId}`;
 const shrinkKey = (leagueId: string) => `draft_history_shrink:${leagueId}`;
+const rejectedKey = (draftId: string) => `draft_rec_rejected:${draftId}`;
 const KINDS: GuideKind[] = ["expert", "projection", "market", "adp", "history"];
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -604,13 +605,32 @@ export function Draft() {
       });
     return { of: (row: ConsensusRow) => (row.sleeperId ? byeWeekOf(bundle.players[row.sleeperId]?.team) : null), mine };
   }, [mode, myTeam, picks, bundle.players]);
+  // Steer the recommendations: narrow to a position, or reject a player so the
+  // next-best fills in. Rejections stick per draft (this draft only).
+  const [recPos, setRecPos] = useState("ALL");
+  const [rejected, setRejected] = useState<string[]>(() => (draft ? loadJson<string[]>(rejectedKey(draft.draft_id), []) : []));
+  useEffect(() => {
+    setRejected(draft ? loadJson<string[]>(rejectedKey(draft.draft_id), []) : []);
+  }, [draft?.draft_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const updateRejected = (next: string[]) => {
+    setRejected(next);
+    if (draft) saveJson(rejectedKey(draft.draft_id), next);
+  };
+  const recCandidates = useMemo(() => {
+    const rej = new Set(rejected);
+    return availableRows.filter((r) => !rej.has(r.key) && (recPos === "ALL" || r.position === recPos));
+  }, [availableRows, rejected, recPos]);
   const recommended = useMemo(
     () =>
-      myTeam && draft && draft.status !== "complete" && availableRows.length
-        ? recommendPicks(availableRows, needs.get(myTeam.rosterId) ?? {}, survival, { byes: byeCtx })
+      myTeam && draft && draft.status !== "complete" && recCandidates.length
+        ? recommendPicks(recCandidates, needs.get(myTeam.rosterId) ?? {}, survival, { byes: byeCtx })
         : [],
-    [availableRows, needs, survival, myTeam, draft, byeCtx],
+    [recCandidates, needs, survival, myTeam, draft, byeCtx],
   );
+  const rejectedStillAvailable = useMemo(() => {
+    const rej = new Set(rejected);
+    return availableRows.filter((r) => rej.has(r.key));
+  }, [availableRows, rejected]);
 
   // Real picks → mock-draft picks so the mock can continue a live draft.
   const realMockPicks = useMemo<MockPick[]>(
@@ -728,7 +748,7 @@ export function Draft() {
         <span className="muted small">{DRAFT_MODE_BLURB[mode]}</span>
       </div>
 
-      {recommended.length > 0 && (
+      {myTeam && draft && draft.status !== "complete" && availableRows.length > 0 && (
         <div className="card section" style={myTurn ? { borderColor: "var(--delta-up)" } : undefined}>
           <h2>
             {myTurn ? "🎯 Recommended now — you're on the clock" : "🎯 Recommended now"}
@@ -736,10 +756,32 @@ export function Draft() {
               <span className="muted small"> · your next pick is #{upcoming.myNextPick}</span>
             )}
           </h2>
+          <div className="pill-row" style={{ marginBottom: 6 }}>
+            {posFilters.map((p) => (
+              <button key={p} className={recPos === p ? "active" : undefined} onClick={() => setRecPos(p)}>
+                {p}
+              </button>
+            ))}
+            {rejectedStillAvailable.length > 0 && (
+              <button className="ghost" onClick={() => updateRejected([])} title={rejectedStillAvailable.map((r) => r.displayName).join(", ")}>
+                ↩ restore {rejectedStillAvailable.length} rejected
+              </button>
+            )}
+          </div>
+          {recommended.length === 0 && <p className="muted small">Nothing left at {recPos} that isn't rejected.</p>}
           <ol className="advice-list">
             {recommended.map((r, i) => (
               <li key={r.row.key}>
                 <span className="icon num">{i + 1}</span>
+                <button
+                  className="ghost"
+                  onClick={() => updateRejected([...rejected, r.row.key])}
+                  title="Not for me — drop him from the recommendations for this draft"
+                  aria-label={`Reject ${r.row.displayName}`}
+                  style={{ padding: "0 6px", lineHeight: 1.2 }}
+                >
+                  ✕
+                </button>
                 <span>
                   <strong>{r.row.displayName}</strong> {r.row.position && <PosChip pos={r.row.position} />}{" "}
                   <span className="muted small">
